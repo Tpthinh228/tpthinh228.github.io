@@ -515,7 +515,7 @@
       <button class="btn" onclick="closeLogin()">Hủy</button>
       <button class="btn btn-primary" onclick="doLogin()">Đăng nhập</button>
     </div>
-    <p style="font-size:12px;color:var(--ink-soft);margin-top:12px;">Mặc định: admin / admin123.</p>
+    <p style="font-size:12px;color:var(--ink-soft);margin-top:12px;">Chưa có tài khoản? Liên hệ Quản trị viên xã để được cấp tài khoản cán bộ.</p>
   </div>
 </div>
 
@@ -543,7 +543,7 @@
     <p class="section-hint" style="margin:-8px 0 14px;">
       <strong>Quản trị viên xã</strong>: toàn quyền thêm/sửa/xóa mọi dữ liệu và quản lý tài khoản.
       <strong>Cán bộ ấp</strong>: chỉ thêm/sửa/xóa dữ liệu (mùa vụ, hộ trồng, kiểm định, đầu ra) thuộc đúng ấp được phân công.
-      Lưu ý: đây là phân quyền ở mức giao diện cho mục đích quản lý nội bộ, mật khẩu lưu ở dạng thường trên trình duyệt — không dùng cho dữ liệu thật sự nhạy cảm.
+      Lưu ý: mật khẩu được quản lý bởi Firebase Authentication (đã mã hoá, không lưu dạng thường); tuy nhiên phân quyền theo vai trò/ấp ở trên chỉ áp dụng ở giao diện — cần cấu hình thêm Firestore Security Rules để chặn ở tầng cơ sở dữ liệu.
     </p>
     <div class="toolbar">
       <div></div>
