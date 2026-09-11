@@ -1,3 +1,4 @@
+// Patched to remove corrupted fragments; configure GEMINI_API_KEY separately.
 /* ============ Dữ liệu mẫu ============ */
 const DEFAULT_ADMINS = [
   { user: 'admin', pass: 'admin123', role: 'super', ap: null }
@@ -100,7 +101,8 @@ const firebaseConfig = {
 /* !!! ĐÁNH DẤU 2: dán Gemini API key vào đây nếu muốn dùng "Trợ lý AI" (lấy miễn phí tại
    aistudio.google.com/apikey). Để trống thì các phần khác vẫn chạy bình thường,
    chỉ riêng Trợ lý AI sẽ báo lỗi khi bấm hỏi. */
-const GEMINI_API_KEY = "AQ.Ab8RN6KBgdUVWn_3GvHEqPVlVtf3z0CyCwwT5mMMnvOBXnrndg";
+// WARNING: Không commit API key thật. Hãy cấu hình qua môi trường triển khai hoặc file local không theo dõi bởi git.
+const GEMINI_API_KEY = '';
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -146,6 +148,15 @@ async function apiAskAI(prompt){
 }
 /* ============ Lưu trữ dùng chung — Firestore, có đồng bộ thời gian thực ============ */
 const APPDATA_KEYS = ['seasons','households','qualityTests','outputs','procurements','products','activity'];
+const DEFAULT_APPDATA = {
+  seasons: SAMPLE_SEASONS,
+  households: SAMPLE_HOUSEHOLDS,
+  qualityTests: SAMPLE_QUALITY,
+  outputs: SAMPLE_OUTPUTS,
+  procurements: SAMPLE_PROCUREMENTS,
+  products: [],
+  activity: []
+};
 function applyAppDataValue(key, value){
   switch(key){
     case 'seasons': seasons = value || []; break;
@@ -163,7 +174,8 @@ async function loadData(){
   for(const key of APPDATA_KEYS){
     try{
       const snap = await getDoc(doc(db, 'appData', key));
-      applyAppDataValue(key, snap.exists() ? snap.data().value : (key==='seasons'?SAMPLE_SEASONS:key==='households'?SAMPLE_HOUSEHOLDS:key==='qualityTests'?SAMPLE_QUALITY:key==='outputs'?SAMPLE_OUTPUTS:key==='procurements'?SAMPLE_PROCUREMENTS:[]));
+      const value = snap.exists() ? snap.data().value : (DEFAULT_APPDATA[key] || []);
+      applyAppDataValue(key, value);
     }catch(e){ applyAppDataValue(key, []); }
   }
   try{
@@ -1488,27 +1500,27 @@ async function askAI(preset){
 
   const btn = document.getElementById('askAiBtn'); btn.disabled = true;
 
-  const dataSummary = seasons.map(s =>
-    `- ${s.name} | cây/sản phẩm: ${s.crop} | hộ trồng: ${householdName(s.householdId)} | ấp: ${s.region} | diện tích: ${s.area}ha | sản lượng: ${s.yieldTon} tấn | giá TT: ${s.price||0}đ/kg | giá trị ước tính: ${money(seasonRevenue(s))}đ | đặc sản: ${s.specialty?'có':'không'} | trạng thái: ${s.status}`
-  ).join('\n');
-  const householdSummary = households.map(h =>
+  const dataSummary = seasons.length ? seasons.map(s =>
+    `- ${s.name} | cây/sản phẩm: ${s.crop} | hộ trồng: ${householdName(s.householdId)} | ấp: ${s.region} | diện tích: ${s.area}ha | sản lượng: ${s.yieldTon} tấn | giá TT: ${s.price || '—'} đ/kg | giá trị ước tính: ${money(seasonRevenue(s))}đ | đặc sản: ${s.specialty?'có':'không'} | trạng thái: ${s.status}`
+  ).join('\n') : '(chưa có dữ liệu mùa vụ)';
+  const householdSummary = households.length ? households.map(h =>
     `- ${h.name} | ấp: ${h.ap} | cây trồng chính: ${h.crop} | diện tích: ${h.area}ha | số năm canh tác: ${h.years||'?'}`
-  ).join('\n');
-  const qualitySummary = qualityTests.map(q =>
+  ).join('\n') : '(chưa có dữ liệu hộ trồng)';
+  const qualitySummary = qualityTests.length ? qualityTests.map(q =>
     `- Mùa vụ: ${seasonLabel(q.seasonId)} | chỉ tiêu: ${q.metric} | tiêu chuẩn áp dụng: ${q.standard||'?'} | giá trị đo: ${q.value}${q.unit?' '+q.unit:''} | ngưỡng cho phép: ${q.threshold}${q.unit?' '+q.unit:''} | ngày kiểm: ${q.date||'?'} | đơn vị kiểm định: ${q.lab||'?'} | kết quả: ${q.result==='pass'?'đạt':q.result==='fail'?'không đạt':'chờ kết quả'}${q.note?' | ghi chú: '+q.note:''}`
-  ).join('\n') || '(chưa có dữ liệu kiểm định)';
-  const certSummary = seasons.map(s =>
+  ).join('\n') : '(chưa có dữ liệu kiểm định)';
+  const certSummary = seasons.length ? seasons.map(s =>
     `- ${s.name}: VietGAP/Nội địa = ${seasonCertStatus(s.id,'VietGAP / Nội địa')}, Siêu thị trong nước = ${seasonCertStatus(s.id,'Siêu thị trong nước')}, Xuất khẩu = ${seasonCertStatus(s.id,'Xuất khẩu (GlobalGAP/MRL quốc tế)')}`
-  ).join('\n');
-  const outputSummary = outputs.map(o =>
+  ).join('\n') : '(chưa có dữ liệu chứng nhận)';
+  const outputSummary = outputs.length ? outputs.map(o =>
     `- Mùa vụ: ${seasonLabel(o.seasonId)} | đối tác: ${o.buyer} | kênh: ${o.channel} | khối lượng: ${o.volume} tấn | giá bán: ${o.price||0}đ/kg | thành tiền: ${money(outputRevenue(o))}đ | ngày giao: ${o.date||'?'} | trạng thái: ${o.status==='done'?'đã giao hàng':o.status==='negotiating'?'đang đàm phán':'đã hủy'}`
-  ).join('\n') || '(chưa có dữ liệu đầu ra)';
-  const procSummary = procurements.map(p =>
+  ).join('\n') : '(chưa có dữ liệu đầu ra)';
+  const procSummary = procurements.length ? procurements.map(p =>
     `- Tin: "${p.title}" | bên mua: ${p.buyer} | cây trồng cần: ${p.crop} | nhu cầu: ${p.quantity} ${p.unitLabel||'tấn'} | giá đề nghị: ${p.priceOffer||0}đ/kg | ưu tiên ấp: ${p.ap} | yêu cầu: ${p.requirement||'không yêu cầu đặc biệt'} | hạn: ${p.deadline||'?'} | trạng thái: ${p.status==='open'?'đang tuyển đầu mối':'đã đủ nguồn hàng'} | số hộ đã gửi chào hàng: ${(p.applicants||[]).length}`
-  ).join('\n') || '(chưa có tin thu mua nào)';
-  const productSummary = products.map(p =>
+  ).join('\n') : '(chưa có tin thu mua nào)';
+  const productSummary = products.length ? products.map(p =>
     `- ${p.name} | người bán: ${p.sellerName||'?'} | ấp: ${p.ap} | còn: ${p.quantity} ${p.unitLabel||'kg'} | giá: ${p.price||0}đ/${p.unitLabel||'kg'} | chứng chỉ: ${p.certification||'Chưa kiểm định'} | trạng thái: ${p.status==='available'?'còn hàng':'hết hàng'} | lượt liên hệ mua: ${(p.buyRequests||[]).length}`
-  ).join('\n') || '(chưa có sản phẩm nào đang rao bán)';
+  ).join('\n') : '(chưa có sản phẩm nào đang rao bán)';
   const prompt = `Bạn là trợ lý nông nghiệp cho xã Bình Mỹ, TP.HCM (ven sông Sài Gòn, đang phát triển sản phẩm rau - hoa - quả, đặc biệt là rau móp, gắn với du lịch cộng đồng). Đây là dữ liệu mùa vụ / sản phẩm hiện có của xã:\n${dataSummary}\n\nDanh sách hộ trồng:\n${householdSummary}\n\nDữ liệu kiểm định chất lượng (nồng độ các chất, dư lượng so với ngưỡng cho phép):\n${qualitySummary}\n\nTình trạng chứng nhận theo mùa vụ (đạt/chưa đạt/chưa kiểm định cho từng chuẩn):\n${certSummary}\n\nDữ liệu đầu ra / tiêu thụ sản phẩm đã thực hiện:\n${outputSummary}\n\nCác sản phẩm đang rao bán (hộ trồng đăng, quán ăn/chợ có thể liên hệ mua):\n${productSummary}\n\nCác tin đăng thu mua đang mở (dạng "tin tuyển dụng" cho nông sản, hộ trồng có thể gửi chào hàng/liên hệ):\n${procSummary}\n\nCâu hỏi của người dùng: ${question}\n\nHãy trả lời ngắn gọn, cụ thể, dựa trên dữ liệu trên. Nếu câu hỏi liên quan đến quy hoạch sản xuất, hãy gợi ý dựa trên số hộ, diện tích và cây trồng chủ lực theo từng ấp. Nếu câu hỏi liên quan đến chất lượng, hãy chỉ rõ chỉ tiêu nào vượt ngưỡng và đề xuất hướng khắc phục (VD: giảm bón đạm nếu nitrat cao, giãn cách thời gian cách ly thuốc BVTV...). Nếu câu hỏi liên quan đến bán hàng cho quán ăn/chợ, hãy gợi ý sản phẩm nào đang có sẵn, giá và chứng chỉ ra sao. Nếu câu hỏi liên quan đến tin thu mua, hãy phân tích tin nào phù hợp với hộ trồng nào (theo cây trồng, ấp, yêu cầu chất lượng) và gợi ý hộ trồng nên gửi chào hàng cho tin nào trước. Nếu thiếu dữ liệu để trả lời chính xác, hãy nói rõ, và luôn nhắc rằng các ngưỡng an toàn thực phẩm cần đối chiếu với quy chuẩn QCVN hiện hành.`;
 try{
     const text = await apiAskAI(prompt);
