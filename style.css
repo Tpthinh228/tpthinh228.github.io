@@ -254,3 +254,58 @@ tbody tr:last-child td{border-bottom:none;}
   .hero-content h1{font-size:22px;}
   .modal{padding:20px;}
 }
+
+/* ============================================================
+   Nav — thanh pill nổi bật trên PC, tab bar cố định trên mobile
+   ============================================================ */
+
+/* ---------- PC / tablet (≥768px): pill nav trong khung riêng ---------- */
+@media(min-width:768px){
+  .pillnav{
+    background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    width:fit-content;margin:0 22px 14px;padding:5px;gap:3px;
+  }
+  .pillnav a{border:1px solid transparent;padding:9px 17px;}
+  .pillnav a:hover{background:var(--paddy-tint);border-color:transparent;color:var(--paddy-deep);}
+  .pillnav a.active{background:var(--paddy);color:#fff;border-color:transparent;}
+  .pillnav a.nav-admin{opacity:.75;border-style:dashed;border-color:var(--line);}
+  .pillnav a.nav-admin:hover{opacity:1;border-style:solid;}
+  .pillnav a.nav-admin.active{background:var(--bloom);border-color:transparent;opacity:1;}
+}
+
+/* ---------- Mobile (≤767px): tab bar cố định dưới màn hình ---------- */
+@media(max-width:767px){
+  body{padding-bottom:calc(60px + env(safe-area-inset-bottom));}
+  section{scroll-margin-top:64px;}
+
+  .pillnav{
+    position:fixed;left:0;right:0;bottom:0;z-index:70;
+    display:flex;justify-content:space-around;align-items:stretch;gap:0;
+    padding:5px 2px calc(5px + env(safe-area-inset-bottom));
+    background:var(--surface);border-top:1px solid var(--line);
+    box-shadow:0 -8px 24px rgba(22,36,28,0.08);
+    overflow-x:visible;
+  }
+  .pillnav a{
+    flex:1;flex-direction:column;justify-content:center;gap:2px;
+    padding:6px 2px;border:none;border-radius:10px;
+    font-size:10.5px;font-weight:500;white-space:normal;line-height:1.25;
+  }
+  .pillnav a .icon{width:20px;height:20px;margin:0;}
+  .pillnav a.active{background:var(--paddy-tint);color:var(--paddy-deep);}
+  .pillnav a.nav-admin{opacity:1;border-style:none;margin-left:0;}
+  .pillnav a.nav-admin.active{background:var(--bloom-tint);color:var(--bloom-deep);}
+
+  .wrap{padding:0 16px;}
+  .hero-card{padding:20px 18px;gap:18px;}
+  .hero-content h1{font-size:20px;}
+  .section-head h2{font-size:17px;}
+  .toolbar{flex-direction:column;align-items:stretch;}
+  .toolbar-controls{width:100%;}
+  .search-input{min-width:0;flex:1;}
+  .modal{border-radius:16px 16px 0 0;max-width:none;width:100%;
+    position:fixed;left:0;right:0;bottom:0;max-height:85vh;margin:0;
+    transform:translateY(100%);}
+  .overlay{align-items:flex-end;padding:0;}
+  .overlay.show .modal{transform:translateY(0);}
+}
