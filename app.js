@@ -130,7 +130,10 @@ async function createAuthUserWithoutSignIn(email, password){
 /* Trợ lý AI — gọi thẳng Gemini từ trình duyệt (thay cho Google Apps Script trước đây) */
 async function apiAskAI(prompt){
   if(!GEMINI_API_KEY) throw new Error('Chưa cấu hình GEMINI_API_KEY trong app.js');
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GEMINI_API_KEY;
+  // ĐÃ SỬA: model cũ "gemini-2.0-flash" đã bị Google shut down từ 1/6/2026 (mọi request
+  // đều lỗi 404 dù API key đúng). Đổi sang alias "gemini-flash-latest" để luôn tự động
+  // trỏ tới model Flash ổn định mới nhất, không cần sửa code mỗi lần Google đổi model.
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + GEMINI_API_KEY;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -141,7 +144,6 @@ async function apiAskAI(prompt){
   if(!text) throw new Error(json?.error?.message || 'Không có phản hồi từ AI');
   return text;
 }
-
 /* ============ Lưu trữ dùng chung — Firestore, có đồng bộ thời gian thực ============ */
 const APPDATA_KEYS = ['seasons','households','qualityTests','outputs','procurements','products','activity'];
 function applyAppDataValue(key, value){
