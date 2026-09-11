@@ -102,7 +102,7 @@ const firebaseConfig = {
    aistudio.google.com/apikey). Để trống thì các phần khác vẫn chạy bình thường,
    chỉ riêng Trợ lý AI sẽ báo lỗi khi bấm hỏi. */
 // WARNING: Không commit API key thật. Hãy cấu hình qua môi trường triển khai hoặc file local không theo dõi bởi git.
-const GEMINI_API_KEY = '';
+const GEMINI_API_KEY = 'AQ.Ab8RN6KBgdUVWn_3GvHEqPVlVtf3z0CyCwwT5mMMnvOBXnrndg';
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
