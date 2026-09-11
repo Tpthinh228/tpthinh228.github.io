@@ -88,28 +88,14 @@ import {
 
 /* !!! ĐÁNH DẤU 1: dán firebaseConfig thật của bạn vào đây
    (Console Firebase → biểu tượng bánh răng → Project settings → mục "Your apps") */
-// Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "AIzaSyDuqly5ejTvMgr3a6OKNvcwGPd3jk7nlZk",
-  authDomain: "binhmy-nongnghiep.firebaseapp.com",
-  projectId: "binhmy-nongnghiep",
-  storageBucket: "binhmy-nongnghiep.firebasestorage.app",
-  messagingSenderId: "356707994338",
-  appId: "1:356707994338:web:df236f5580c0ea2731ecbb",
-  measurementId: "G-39KVE5S905"
+  apiKey: "DAN_API_KEY_VAO_DAY",
+  authDomain: "DAN_AUTH_DOMAIN_VAO_DAY",
+  projectId: "DAN_PROJECT_ID_VAO_DAY",
+  storageBucket: "DAN_STORAGE_BUCKET_VAO_DAY",
+  messagingSenderId: "DAN_SENDER_ID_VAO_DAY",
+  appId: "DAN_APP_ID_VAO_DAY"
 };
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
-
 
 /* !!! ĐÁNH DẤU 2: dán Gemini API key vào đây nếu muốn dùng "Trợ lý AI" (lấy miễn phí tại
    aistudio.google.com/apikey). Để trống thì các phần khác vẫn chạy bình thường,
