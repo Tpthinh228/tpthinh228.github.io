@@ -100,7 +100,7 @@ const firebaseConfig = {
 /* !!! ĐÁNH DẤU 2: dán Gemini API key vào đây nếu muốn dùng "Trợ lý AI" (lấy miễn phí tại
    aistudio.google.com/apikey). Để trống thì các phần khác vẫn chạy bình thường,
    chỉ riêng Trợ lý AI sẽ báo lỗi khi bấm hỏi. */
-const GEMINI_API_KEY = "AIzaSyAjkyuorfS4tiu5flCoJjZ6MQ3v2lhB79s";
+const GEMINI_API_KEY = "AQ.Ab8RN6KDErhFbnDn9Rfq6qavsRaxKIbui1zx7fgT46yoHvY6uw";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
