@@ -75,113 +75,177 @@ function animateCount(el, to, isMoney){
   requestAnimationFrame(step);
 }
 
-/* ============ Lưu trữ dùng chung — qua Google Apps Script + Google Sheet (miễn phí, không cần server riêng) ============ */
-/* Sau khi triển khai Apps Script (xem HUONG_DAN_TRIEN_KHAI.md), dán URL Web App vào đây: */
-const API_URL = 'PASTE_GOOGLE_APPS_SCRIPT_WEB_APP_URL_HERE';
+/* ============ Firebase (Authentication + Firestore) ============ */
+import { initializeApp, deleteApp }
+  from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+import {
+  getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
+  signOut, updatePassword
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+import {
+  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, collection
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
-async function apiGet(key){
+/* !!! ĐÁNH DẤU 1: dán firebaseConfig thật của bạn vào đây
+   (Console Firebase → biểu tượng bánh răng → Project settings → mục "Your apps") */
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyDuqly5ejTvMgr3a6OKNvcwGPd3jk7nlZk",
+  authDomain: "binhmy-nongnghiep.firebaseapp.com",
+  projectId: "binhmy-nongnghiep",
+  storageBucket: "binhmy-nongnghiep.firebasestorage.app",
+  messagingSenderId: "356707994338",
+  appId: "1:356707994338:web:df236f5580c0ea2731ecbb",
+  measurementId: "G-39KVE5S905"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
+
+
+/* !!! ĐÁNH DẤU 2: dán Gemini API key vào đây nếu muốn dùng "Trợ lý AI" (lấy miễn phí tại
+   aistudio.google.com/apikey). Để trống thì các phần khác vẫn chạy bình thường,
+   chỉ riêng Trợ lý AI sẽ báo lỗi khi bấm hỏi. */
+const GEMINI_API_KEY = "";
+
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+const db = getFirestore(firebaseApp);
+
+/* Firebase Auth cần dạng email thật, nên "tên đăng nhập" của bạn được quy đổi thành
+   1 email giả nội bộ, người dùng không cần biết/thấy email này. */
+function adminEmail(username){ return username.trim().toLowerCase() + '@canbo.binhmy.local'; }
+function personEmail(username){ return username.trim().toLowerCase() + '@nguoidung.binhmy.local'; }
+
+/* Tạo tài khoản Firebase Auth mới MÀ KHÔNG làm mất phiên đăng nhập hiện tại.
+   (Mặc định Firebase tự đăng nhập vào tài khoản vừa tạo — cần tránh khi
+   Quản trị viên đang tạo tài khoản CHO NGƯỜI KHÁC, không phải cho chính mình.) */
+async function createAuthUserWithoutSignIn(email, password){
+  const secondaryApp = initializeApp(firebaseConfig, 'secondary-' + Date.now());
+  const secondaryAuth = getAuth(secondaryApp);
   try{
-    const res = await fetch(`${API_URL}?action=get&key=${encodeURIComponent(key)}`);
-    const json = await res.json();
-    return (json.ok && json.value != null) ? { value: json.value } : null;
-  }catch(e){ return null; }
+    const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+    const uid = cred.user.uid;
+    await signOut(secondaryAuth);
+    return uid;
+  } finally {
+    await deleteApp(secondaryApp);
+  }
 }
-async function apiSet(key, value){
-  try{
-    await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // tránh preflight CORS với Apps Script
-      body: JSON.stringify({ action: 'set', key, value })
-    });
-    return true;
-  }catch(e){ return false; }
-}
+
+/* Trợ lý AI — gọi thẳng Gemini từ trình duyệt (thay cho Google Apps Script trước đây) */
 async function apiAskAI(prompt){
-  const res = await fetch(API_URL, {
+  if(!GEMINI_API_KEY) throw new Error('Chưa cấu hình GEMINI_API_KEY trong app.js');
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GEMINI_API_KEY;
+  const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action: 'askAI', prompt })
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
   });
   const json = await res.json();
-  if(!json.ok) throw new Error(json.error || 'Lỗi AI');
-  return json.text;
+  const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if(!text) throw new Error(json?.error?.message || 'Không có phản hồi từ AI');
+  return text;
 }
 
-async function loadData(){
-  try{ const s = await apiGet('seasons:list'); seasons = s ? JSON.parse(s.value) : SAMPLE_SEASONS; }
-  catch(e){ seasons = SAMPLE_SEASONS; }
-  try{ const h = await apiGet('households:list'); households = h ? JSON.parse(h.value) : SAMPLE_HOUSEHOLDS; }
-  catch(e){ households = SAMPLE_HOUSEHOLDS; }
-  try{ const c = await apiGet('admins:list'); admins = c ? JSON.parse(c.value) : DEFAULT_ADMINS; }
-  catch(e){ admins = DEFAULT_ADMINS; }
-  try{ const a = await apiGet('activity:log'); activity = a ? JSON.parse(a.value) : []; }
-  catch(e){ activity = []; }
-  try{ const q = await apiGet('quality:list'); qualityTests = q ? JSON.parse(q.value) : SAMPLE_QUALITY; }
-  catch(e){ qualityTests = SAMPLE_QUALITY; }
-  try{ const o = await apiGet('outputs:list'); outputs = o ? JSON.parse(o.value) : SAMPLE_OUTPUTS; }
-  catch(e){ outputs = SAMPLE_OUTPUTS; }
-  try{ const p = await apiGet('procurements:list'); procurements = p ? JSON.parse(p.value) : SAMPLE_PROCUREMENTS; }
-  catch(e){ procurements = SAMPLE_PROCUREMENTS; }
-  try{ const pr = await apiGet('products:list'); products = pr ? JSON.parse(pr.value) : []; }
-  catch(e){ products = []; }
-  try{ const u = await apiGet('users:list'); personUsers = u ? JSON.parse(u.value) : []; }
-  catch(e){ personUsers = []; }
-  lastRemoteHash = JSON.stringify({seasons,households,activity,qualityTests,outputs,procurements,products,personUsers});
+/* ============ Lưu trữ dùng chung — Firestore, có đồng bộ thời gian thực ============ */
+const APPDATA_KEYS = ['seasons','households','qualityTests','outputs','procurements','products','activity'];
+function applyAppDataValue(key, value){
+  switch(key){
+    case 'seasons': seasons = value || []; break;
+    case 'households': households = value || []; break;
+    case 'qualityTests': qualityTests = value || []; break;
+    case 'outputs': outputs = value || []; break;
+    case 'procurements': procurements = value || []; break;
+    case 'products': products = value || []; break;
+    case 'activity': activity = value || []; break;
+  }
 }
-async function saveSeasons(){ try{ await apiSet('seasons:list', JSON.stringify(seasons)); }catch(e){} }
-async function saveHouseholds(){ try{ await apiSet('households:list', JSON.stringify(households)); }catch(e){} }
-async function saveAdmins(){ try{ await apiSet('admins:list', JSON.stringify(admins)); }catch(e){} }
-async function saveActivity(){ try{ await apiSet('activity:log', JSON.stringify(activity)); }catch(e){} }
-async function saveQualityTests(){ try{ await apiSet('quality:list', JSON.stringify(qualityTests)); }catch(e){} }
-async function saveOutputs(){ try{ await apiSet('outputs:list', JSON.stringify(outputs)); }catch(e){} }
-async function saveProcurements(){ try{ await apiSet('procurements:list', JSON.stringify(procurements)); }catch(e){} }
-async function saveProducts(){ try{ await apiSet('products:list', JSON.stringify(products)); }catch(e){} }
-async function savePersonUsers(){ try{ await apiSet('users:list', JSON.stringify(personUsers)); }catch(e){} }
+
+/* Tải dữ liệu lần đầu (trước khi render lần đầu tiên) */
+async function loadData(){
+  for(const key of APPDATA_KEYS){
+    try{
+      const snap = await getDoc(doc(db, 'appData', key));
+      applyAppDataValue(key, snap.exists() ? snap.data().value : (key==='seasons'?SAMPLE_SEASONS:key==='households'?SAMPLE_HOUSEHOLDS:key==='qualityTests'?SAMPLE_QUALITY:key==='outputs'?SAMPLE_OUTPUTS:key==='procurements'?SAMPLE_PROCUREMENTS:[]));
+    }catch(e){ applyAppDataValue(key, []); }
+  }
+  try{
+    const snap = await getDocs(collection(db, 'admins'));
+    admins = snap.docs.map(d=>({ uid: d.id, ...d.data() }));
+  }catch(e){ admins = []; }
+  try{
+    const snap = await getDocs(collection(db, 'personUsers'));
+    personUsers = snap.docs.map(d=>({ uid: d.id, ...d.data() }));
+  }catch(e){ personUsers = []; }
+}
+
+/* Lắng nghe thay đổi thời gian thực — thay hoàn toàn cho việc "poll mỗi 60 giây" trước đây.
+   Nhiều người mở trang cùng lúc sẽ tự thấy cập nhật của nhau ngay lập tức. */
+function setupRealtime(){
+  APPDATA_KEYS.forEach(key=>{
+    onSnapshot(doc(db, 'appData', key), (snap)=>{
+      applyAppDataValue(key, snap.exists() ? snap.data().value : []);
+      renderAll();
+      if(firstLoadDone && key!=='activity') toast('Dữ liệu vừa được cập nhật', 'warn');
+      firstLoadDone = true;
+    }, (err)=>console.error('Lỗi đồng bộ ' + key, err));
+  });
+  onSnapshot(collection(db, 'admins'), (snap)=>{
+    admins = snap.docs.map(d=>({ uid: d.id, ...d.data() }));
+    if(currentUser){ const me = admins.find(a=>a.uid===currentUser.uid); if(me) currentUser = me; }
+    renderAll();
+    if(document.getElementById('accountsOverlay')?.classList.contains('show')) renderAccountsTable();
+  }, (err)=>console.error('Lỗi đồng bộ admins', err));
+  onSnapshot(collection(db, 'personUsers'), (snap)=>{
+    personUsers = snap.docs.map(d=>({ uid: d.id, ...d.data() }));
+    if(currentPersonUser){ const me = personUsers.find(u=>u.uid===currentPersonUser.uid); if(me) currentPersonUser = me; }
+  }, (err)=>console.error('Lỗi đồng bộ personUsers', err));
+}
+
+async function saveAppData(key, value){
+  try{ await setDoc(doc(db, 'appData', key), { value }); }catch(e){ console.error(e); }
+}
+async function saveSeasons(){ await saveAppData('seasons', seasons); }
+async function saveHouseholds(){ await saveAppData('households', households); }
+async function saveActivity(){ await saveAppData('activity', activity); }
+async function saveQualityTests(){ await saveAppData('qualityTests', qualityTests); }
+async function saveOutputs(){ await saveAppData('outputs', outputs); }
+async function saveProcurements(){ await saveAppData('procurements', procurements); }
+async function saveProducts(){ await saveAppData('products', products); }
 
 async function logActivity(text){
   activity.unshift({ ts: Date.now(), text });
   activity = activity.slice(0, 20);
   renderActivity();
   await saveActivity();
-  lastRemoteHash = JSON.stringify({seasons,households,activity,qualityTests,outputs,procurements,products,personUsers});
 }
 
-/* Đồng bộ định kỳ: kiểm tra xem có ai khác vừa cập nhật dữ liệu chung không */
-async function pollRemote(){
-  if(document.querySelector('.overlay.show')) return; // đang có form mở, tạm hoãn để không mất dữ liệu đang nhập
-  const pill = document.getElementById('syncPill');
-  pill.classList.add('syncing');
-  document.getElementById('syncText').textContent = 'Đang đồng bộ...';
+/* Khôi phục phiên đăng nhập khi tải lại trang (Firebase tự nhớ phiên đăng nhập trong trình duyệt) */
+onAuthStateChanged(auth, async (user)=>{
+  if(!user){
+    currentUser = null; isAdmin = false; isSuperAdmin = false; currentPersonUser = null;
+    renderAll(); return;
+  }
   try{
-    const s = await apiGet('seasons:list');
-    const h = await apiGet('households:list');
-    const a = await apiGet('activity:log');
-    const q = await apiGet('quality:list');
-    const o = await apiGet('outputs:list');
-    const p = await apiGet('procurements:list');
-    const pr = await apiGet('products:list');
-    const u = await apiGet('users:list');
-    const remoteSeasons = s ? JSON.parse(s.value) : seasons;
-    const remoteHouseholds = h ? JSON.parse(h.value) : households;
-    const remoteActivity = a ? JSON.parse(a.value) : activity;
-    const remoteQuality = q ? JSON.parse(q.value) : qualityTests;
-    const remoteOutputs = o ? JSON.parse(o.value) : outputs;
-    const remoteProcurements = p ? JSON.parse(p.value) : procurements;
-    const remoteProducts = pr ? JSON.parse(pr.value) : products;
-    const remotePersonUsers = u ? JSON.parse(u.value) : personUsers;
-    const newHash = JSON.stringify({seasons: remoteSeasons, households: remoteHouseholds, activity: remoteActivity, qualityTests: remoteQuality, outputs: remoteOutputs, procurements: remoteProcurements, products: remoteProducts, personUsers: remotePersonUsers});
-    if(newHash !== lastRemoteHash){
-      seasons = remoteSeasons; households = remoteHouseholds; activity = remoteActivity;
-      qualityTests = remoteQuality; outputs = remoteOutputs; procurements = remoteProcurements; products = remoteProducts; personUsers = remotePersonUsers;
-      lastRemoteHash = newHash;
-      renderAll();
-      if(firstLoadDone) toast('Dữ liệu vừa được cập nhật', 'warn');
+    const adminSnap = await getDoc(doc(db, 'admins', user.uid));
+    if(adminSnap.exists()){
+      currentUser = { uid: user.uid, ...adminSnap.data() }; isAdmin = true; isSuperAdmin = currentUser.role === 'super';
+    }else{
+      const personSnap = await getDoc(doc(db, 'personUsers', user.uid));
+      if(personSnap.exists()) currentPersonUser = { uid: user.uid, ...personSnap.data() };
     }
-  }catch(e){ /* bỏ qua lỗi mạng, thử lại ở vòng sau */ }
-  pill.classList.remove('syncing');
-  document.getElementById('syncText').textContent = 'Đã đồng bộ';
-  firstLoadDone = true;
-}
+  }catch(e){ console.error('Lỗi khôi phục phiên đăng nhập', e); }
+  renderAll();
+});
 
 /* ============ Đồng hồ trực tiếp ============ */
 function tickClock(){
@@ -1148,16 +1212,20 @@ function openLogin(){
   document.getElementById('loginOverlay').classList.add('show');
 }
 function closeLogin(){ document.getElementById('loginOverlay').classList.remove('show'); }
-function doLogin(){
+async function doLogin(){
   const u = document.getElementById('loginUser').value.trim();
   const p = document.getElementById('loginPass').value;
-  const found = admins.find(a=>a.user===u && a.pass===p);
-  if(found){
+  const errEl = document.getElementById('loginError');
+  try{
+    const cred = await signInWithEmailAndPassword(auth, adminEmail(u), p);
+    const snap = await getDoc(doc(db, 'admins', cred.user.uid));
+    if(!snap.exists()){ await signOut(auth); errEl.style.display='block'; return; }
+    const found = { uid: cred.user.uid, ...snap.data() };
     currentUser = found; isAdmin = true; isSuperAdmin = found.role==='super';
     closeLogin(); renderAll(); toast('Đăng nhập thành công · ' + roleLabel(found.role), 'ok');
-  }else{ document.getElementById('loginError').style.display='block'; }
+  }catch(e){ errEl.style.display='block'; }
 }
-function logout(){ currentUser = null; isAdmin = false; isSuperAdmin = false; renderAll(); }
+function logout(){ signOut(auth); currentUser = null; isAdmin = false; isSuperAdmin = false; renderAll(); }
 
 /* ============ Đăng ký / đăng nhập cho Hộ trồng & Quán ăn-Chợ ============ */
 function openPersonAuth(mode){
@@ -1180,17 +1248,20 @@ function switchPersonAuth(mode){
 function togglePuApField(){
   document.getElementById('pu_ap_field').style.display = document.getElementById('pu_role').value==='grower' ? 'block' : 'none';
 }
-function doPersonLogin(){
+async function doPersonLogin(){
   const u = document.getElementById('pu_loginUser').value.trim();
   const p = document.getElementById('pu_loginPass').value;
-  const found = personUsers.find(x=>x.username===u && x.password===p);
-  if(found){
-    currentPersonUser = found;
+  const errEl = document.getElementById('personLoginError');
+  try{
+    const cred = await signInWithEmailAndPassword(auth, personEmail(u), p);
+    const snap = await getDoc(doc(db, 'personUsers', cred.user.uid));
+    if(!snap.exists()){ await signOut(auth); errEl.style.display='block'; return; }
+    currentPersonUser = { uid: cred.user.uid, ...snap.data() };
     closePersonAuth(); renderAll();
-    toast('Đăng nhập thành công · ' + personRoleLabel(found.role), 'ok');
-  }else{ document.getElementById('personLoginError').style.display='block'; }
+    toast('Đăng nhập thành công · ' + personRoleLabel(currentPersonUser.role), 'ok');
+  }catch(e){ errEl.style.display='block'; }
 }
-function personLogout(){ currentPersonUser = null; renderAll(); }
+function personLogout(){ signOut(auth); currentPersonUser = null; renderAll(); }
 async function doPersonRegister(){
   const role = document.getElementById('pu_role').value;
   const displayName = document.getElementById('pu_displayName').value.trim();
@@ -1202,12 +1273,17 @@ async function doPersonRegister(){
   if(!displayName || !username || !password || !phone || (role==='grower' && !ap) || personUsers.some(x=>x.username===username)){
     err.style.display='block'; return;
   }
-  const record = { username, password, role, displayName, phone, ap, createdDate: new Date().toISOString().slice(0,10) };
-  personUsers.push(record);
-  await savePersonUsers();
-  currentPersonUser = record;
-  closePersonAuth(); renderAll();
-  toast('Đăng ký thành công, đã đăng nhập', 'ok');
+  try{
+    const cred = await createUserWithEmailAndPassword(auth, personEmail(username), password);
+    const record = { username, role, displayName, phone, ap, createdDate: new Date().toISOString().slice(0,10) };
+    await setDoc(doc(db, 'personUsers', cred.user.uid), record);
+    currentPersonUser = { uid: cred.user.uid, ...record };
+    closePersonAuth(); renderAll();
+    toast('Đăng ký thành công, đã đăng nhập', 'ok');
+  }catch(e){
+    err.textContent = e.code==='auth/email-already-in-use' ? 'Tên đăng nhập đã tồn tại.' : ('Lỗi: ' + e.message);
+    err.style.display='block';
+  }
 }
 
 /* ============ Đổi mật khẩu của chính mình ============ */
@@ -1220,11 +1296,17 @@ function openPwForm(){
 function closePwForm(){ document.getElementById('pwOverlay').classList.remove('show'); }
 async function savePwForm(){
   const p1 = document.getElementById('pw_pass').value, p2 = document.getElementById('pw_pass2').value;
-  if(!p1 || p1!==p2){ document.getElementById('pwError').style.display='block'; return; }
-  const acc = admins.find(a=>a.user===currentUser.user);
-  if(acc){ acc.pass = p1; currentUser.pass = p1; }
-  await saveAdmins();
-  closePwForm(); toast('Đã đổi mật khẩu', 'ok');
+  const errEl = document.getElementById('pwError');
+  if(!p1 || p1!==p2){ errEl.style.display='block'; return; }
+  try{
+    await updatePassword(auth.currentUser, p1);
+    closePwForm(); toast('Đã đổi mật khẩu', 'ok');
+  }catch(e){
+    errEl.textContent = e.code==='auth/requires-recent-login'
+      ? 'Vì lý do bảo mật, hãy đăng xuất rồi đăng nhập lại trước khi đổi mật khẩu.'
+      : ('Không thể đổi mật khẩu: ' + e.message);
+    errEl.style.display='block';
+  }
 }
 
 /* ============ Quản lý tài khoản (chỉ Quản trị viên xã) ============ */
@@ -1239,31 +1321,32 @@ function renderAccountsTable(){
   if(admins.length===0){ body.innerHTML = emptyRow(4, 'Chưa có tài khoản nào.'); return; }
   body.innerHTML = admins.map(a=>`
     <tr>
-      <td>${a.user}${a.user===currentUser.user ? ' <span class="chip chip-growing">Bạn</span>' : ''}</td>
+      <td>${a.user}${a.uid===currentUser.uid ? ' <span class="chip chip-growing">Bạn</span>' : ''}</td>
       <td>${roleLabel(a.role)}</td>
       <td>${a.ap || '—'}</td>
       <td class="row-actions">
-        <button class="btn btn-sm" onclick="openAccountForm('${a.user}')">Sửa</button>
-        ${a.user!==currentUser.user ? `<button class="btn btn-sm btn-danger" onclick="deleteAccount('${a.user}')">Xóa</button>` : ''}
+        <button class="btn btn-sm" onclick="openAccountForm('${a.uid}')">Sửa</button>
+        ${a.uid!==currentUser.uid ? `<button class="btn btn-sm btn-danger" onclick="deleteAccount('${a.uid}')">Xóa</button>` : ''}
       </td>
     </tr>`).join('');
 }
 function toggleAccountApField(){
   document.getElementById('acc_ap_field').style.display = document.getElementById('acc_role').value==='ward' ? 'block' : 'none';
 }
-function openAccountForm(username){
+function openAccountForm(uid){
   if(!isSuperAdmin) return;
   document.getElementById('accountFormError').style.display='none';
   document.getElementById('accountFormOverlay').classList.add('show');
-  if(username){
-    const a = admins.find(x=>x.user===username);
+  if(uid){
+    const a = admins.find(x=>x.uid===uid);
     document.getElementById('accountFormTitle').textContent = 'Sửa tài khoản';
-    document.getElementById('acc_editUser').value = username;
+    document.getElementById('acc_editUser').value = uid;
     document.getElementById('acc_user').value = a.user;
     document.getElementById('acc_user').disabled = true;
     document.getElementById('acc_pass').value = '';
-    document.getElementById('acc_pass').placeholder = 'Để trống nếu không đổi mật khẩu';
-    document.getElementById('acc_pass_label').textContent = 'Mật khẩu mới (tùy chọn)';
+    document.getElementById('acc_pass').placeholder = 'Chưa hỗ trợ đổi mật khẩu hộ — để trống';
+    document.getElementById('acc_pass').disabled = true;
+    document.getElementById('acc_pass_label').textContent = 'Mật khẩu (người đó tự đổi trong "Đổi mật khẩu")';
     document.getElementById('acc_role').value = a.role;
     document.getElementById('acc_ap').value = a.ap || '';
   }else{
@@ -1271,6 +1354,7 @@ function openAccountForm(username){
     document.getElementById('acc_editUser').value = '';
     document.getElementById('acc_user').value = ''; document.getElementById('acc_user').disabled = false;
     document.getElementById('acc_pass').value = ''; document.getElementById('acc_pass').placeholder = '••••••';
+    document.getElementById('acc_pass').disabled = false;
     document.getElementById('acc_pass_label').textContent = 'Mật khẩu';
     document.getElementById('acc_role').value = 'ward'; document.getElementById('acc_ap').value = '';
   }
@@ -1278,36 +1362,39 @@ function openAccountForm(username){
 }
 function closeAccountForm(){ document.getElementById('accountFormOverlay').classList.remove('show'); }
 async function saveAccountForm(){
-  const editUser = document.getElementById('acc_editUser').value;
+  const editUid = document.getElementById('acc_editUser').value;
   const user = document.getElementById('acc_user').value.trim();
   const pass = document.getElementById('acc_pass').value;
   const role = document.getElementById('acc_role').value;
   const ap = role==='ward' ? document.getElementById('acc_ap').value.trim() : null;
   const err = document.getElementById('accountFormError');
-  if(!user || (!editUser && !pass) || (role==='ward' && !ap)){ err.style.display='block'; return; }
-  if(editUser){
-    const idx = admins.findIndex(a=>a.user===editUser);
-    admins[idx] = { user, pass: pass || admins[idx].pass, role, ap };
-    if(currentUser.user===user) currentUser = admins[idx];
-  }else{
-    if(admins.some(a=>a.user===user)){ err.textContent='Tên tài khoản đã tồn tại.'; err.style.display='block'; return; }
-    admins.push({ user, pass, role, ap });
+  if(!user || (!editUid && !pass) || (role==='ward' && !ap)){ err.style.display='block'; return; }
+  try{
+    if(editUid){
+      await updateDoc(doc(db, 'admins', editUid), { role, ap });
+      if(currentUser.uid===editUid) currentUser = { ...currentUser, role, ap };
+    }else{
+      if(admins.some(a=>a.user===user)){ err.textContent='Tên tài khoản đã tồn tại.'; err.style.display='block'; return; }
+      const uid = await createAuthUserWithoutSignIn(adminEmail(user), pass);
+      await setDoc(doc(db, 'admins', uid), { user, role, ap });
+    }
+    await logActivity((editUid ? 'Cập nhật tài khoản: ' : 'Thêm tài khoản mới: ') + user + ' (' + roleLabel(role) + ')');
+    closeAccountForm(); renderAccountsTable(); renderAll(); toast('Đã lưu tài khoản', 'ok');
+  }catch(e){
+    err.textContent = 'Lỗi: ' + e.message; err.style.display='block';
   }
-  await saveAdmins();
-  await logActivity((editUser ? 'Cập nhật tài khoản: ' : 'Thêm tài khoản mới: ') + user + ' (' + roleLabel(role) + ')');
-  closeAccountForm(); renderAccountsTable(); renderAll(); toast('Đã lưu tài khoản', 'ok');
 }
-async function deleteAccount(username){
-  if(username===currentUser.user){ toast('Không thể tự xóa tài khoản đang đăng nhập', 'warn'); return; }
-  const remainingSupers = admins.filter(a=>a.role==='super' && a.user!==username);
-  const target = admins.find(a=>a.user===username);
-  if(target && target.role==='super' && remainingSupers.length===0){
+async function deleteAccount(uid){
+  const target = admins.find(a=>a.uid===uid);
+  if(!target) return;
+  if(uid===currentUser.uid){ toast('Không thể tự xóa tài khoản đang đăng nhập', 'warn'); return; }
+  const remainingSupers = admins.filter(a=>a.role==='super' && a.uid!==uid);
+  if(target.role==='super' && remainingSupers.length===0){
     toast('Cần giữ lại ít nhất 1 Quản trị viên xã', 'warn'); return;
   }
-  if(!confirm('Xóa tài khoản "' + username + '"?')) return;
-  admins = admins.filter(a=>a.user!==username);
-  await saveAdmins();
-  await logActivity('Xóa tài khoản: ' + username);
+  if(!confirm('Xóa tài khoản "' + target.user + '"? (Chỉ xóa hồ sơ trong Firestore; muốn xóa hẳn đăng nhập thì vào Firebase Console → Authentication xóa thêm)')) return;
+  await deleteDoc(doc(db, 'admins', uid));
+  await logActivity('Xóa tài khoản: ' + target.user);
   renderAccountsTable(); toast('Đã xóa tài khoản', 'warn');
 }
 
@@ -1440,7 +1527,7 @@ async function askAI(preset){
     const text = await apiAskAI(prompt);
     chatHistory[chatHistory.length-1] = { role: 'ai', text };
   }catch(e){
-    chatHistory[chatHistory.length-1] = { role: 'ai', text: 'Không thể kết nối AI lúc này (kiểm tra đã cấu hình ANTHROPIC_API_KEY trong Apps Script chưa). Vui lòng thử lại.' };
+    chatHistory[chatHistory.length-1] = { role: 'ai', text: 'Không thể kết nối AI lúc này (kiểm tra đã dán GEMINI_API_KEY trong app.js chưa). Vui lòng thử lại.' };
   }finally{
     btn.disabled = false; renderChat();
   }
@@ -1493,5 +1580,20 @@ function initRouter(){
   document.getElementById('searchProduct').addEventListener('input', debounce(renderProducts, 250));
   document.getElementById('filterProductName').addEventListener('change', renderProducts);
   document.getElementById('filterProductCert').addEventListener('change', renderProducts);
-  setInterval(pollRemote, 60000); // 60 giây/lần — đủ dùng cho quy mô xã, tránh vượt hạn mức miễn phí của Google Apps Script
+  setupRealtime(); // Firestore tự đẩy cập nhật theo thời gian thực, không cần poll định kỳ nữa
 })();
+
+/* ============ Đưa các hàm ra phạm vi toàn cục (window) ============ */
+/* Bắt buộc vì app.js giờ là ES module (dùng "import" của Firebase) — các thuộc tính
+   onclick="..." viết thẳng trong index.html chỉ gọi được hàm nằm trên window. */
+Object.assign(window, {
+  askAI, closeAccountForm, closeAccountsModal, closeApplyForm, closeBuyForm, closeForm, closeHhForm,
+  closeLogin, closeOutputForm, closePersonAuth, closeProcForm, closeProductForm, closePwForm, closeQualityForm,
+  deleteAccount, deleteHousehold, deleteOutput, deleteProcurement, deleteProduct, deleteQualityTest, deleteSeason,
+  doLogin, doPersonLogin, doPersonRegister, exportCsv, logout,
+  openAccountForm, openAccountsModal, openApplyForm, openBuyForm, openForm, openHhForm, openLogin,
+  openOutputForm, openPersonAuth, openProcForm, openProductForm, openPwForm, openQualityForm, personLogout,
+  saveAccountForm, saveForm, saveHhForm, saveOutputForm, saveProcForm, saveProductForm, savePwForm, saveQualityForm,
+  submitApplication, submitBuyRequest, switchPersonAuth, toggleAccountApField, toggleApplicants, toggleBuyers,
+  toggleProcStatus, toggleProductStatus, togglePuApField
+});
