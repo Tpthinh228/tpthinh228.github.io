@@ -1510,16 +1510,14 @@ async function askAI(preset){
     `- ${p.name} | người bán: ${p.sellerName||'?'} | ấp: ${p.ap} | còn: ${p.quantity} ${p.unitLabel||'kg'} | giá: ${p.price||0}đ/${p.unitLabel||'kg'} | chứng chỉ: ${p.certification||'Chưa kiểm định'} | trạng thái: ${p.status==='available'?'còn hàng':'hết hàng'} | lượt liên hệ mua: ${(p.buyRequests||[]).length}`
   ).join('\n') || '(chưa có sản phẩm nào đang rao bán)';
   const prompt = `Bạn là trợ lý nông nghiệp cho xã Bình Mỹ, TP.HCM (ven sông Sài Gòn, đang phát triển sản phẩm rau - hoa - quả, đặc biệt là rau móp, gắn với du lịch cộng đồng). Đây là dữ liệu mùa vụ / sản phẩm hiện có của xã:\n${dataSummary}\n\nDanh sách hộ trồng:\n${householdSummary}\n\nDữ liệu kiểm định chất lượng (nồng độ các chất, dư lượng so với ngưỡng cho phép):\n${qualitySummary}\n\nTình trạng chứng nhận theo mùa vụ (đạt/chưa đạt/chưa kiểm định cho từng chuẩn):\n${certSummary}\n\nDữ liệu đầu ra / tiêu thụ sản phẩm đã thực hiện:\n${outputSummary}\n\nCác sản phẩm đang rao bán (hộ trồng đăng, quán ăn/chợ có thể liên hệ mua):\n${productSummary}\n\nCác tin đăng thu mua đang mở (dạng "tin tuyển dụng" cho nông sản, hộ trồng có thể gửi chào hàng/liên hệ):\n${procSummary}\n\nCâu hỏi của người dùng: ${question}\n\nHãy trả lời ngắn gọn, cụ thể, dựa trên dữ liệu trên. Nếu câu hỏi liên quan đến quy hoạch sản xuất, hãy gợi ý dựa trên số hộ, diện tích và cây trồng chủ lực theo từng ấp. Nếu câu hỏi liên quan đến chất lượng, hãy chỉ rõ chỉ tiêu nào vượt ngưỡng và đề xuất hướng khắc phục (VD: giảm bón đạm nếu nitrat cao, giãn cách thời gian cách ly thuốc BVTV...). Nếu câu hỏi liên quan đến bán hàng cho quán ăn/chợ, hãy gợi ý sản phẩm nào đang có sẵn, giá và chứng chỉ ra sao. Nếu câu hỏi liên quan đến tin thu mua, hãy phân tích tin nào phù hợp với hộ trồng nào (theo cây trồng, ấp, yêu cầu chất lượng) và gợi ý hộ trồng nên gửi chào hàng cho tin nào trước. Nếu thiếu dữ liệu để trả lời chính xác, hãy nói rõ, và luôn nhắc rằng các ngưỡng an toàn thực phẩm cần đối chiếu với quy chuẩn QCVN hiện hành.`;
-
-  try{
+try{
     const text = await apiAskAI(prompt);
     chatHistory[chatHistory.length-1] = { role: 'ai', text };
   }catch(e){
-    chatHistory[chatHistory.length-1] = { role: 'ai', text: 'Không thể kết nối AI lúc này (kiểm tra đã dán GEMINI_API_KEY trong app.js chưa). Vui lòng thử lại.' };
+    // ĐÃ SỬA: trước đây hiện thông báo chung chung...
+    console.error('Lỗi gọi Gemini API:', e);
+    chatHistory[chatHistory.length-1] = { role: 'ai', text: 'Lỗi khi gọi AI: ' + e.message };
   }finally{
-    btn.disabled = false; renderChat();
-  }
-}
 
 /* ============ Điều hướng dạng "trang riêng" (chỉ hiện 1 section tại 1 thời điểm) ============ */
 const VIEW_IDS = ['tin-thu-mua','kiem-dinh','tro-ly-ai','quan-ly'];
