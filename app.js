@@ -100,7 +100,7 @@ const firebaseConfig = {
 /* !!! ĐÁNH DẤU 2: dán Gemini API key vào đây nếu muốn dùng "Trợ lý AI" (lấy miễn phí tại
    aistudio.google.com/apikey). Để trống thì các phần khác vẫn chạy bình thường,
    chỉ riêng Trợ lý AI sẽ báo lỗi khi bấm hỏi. */
-const GEMINI_API_KEY = "";
+const GEMINI_API_KEY = "AQ.Ab8RN6KBgdUVWn_3GvHEqPVlVtf3z0CyCwwT5mMMnvOBXnrndg";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -1518,6 +1518,9 @@ try{
     console.error('Lỗi gọi Gemini API:', e);
     chatHistory[chatHistory.length-1] = { role: 'ai', text: 'Lỗi khi gọi AI: ' + e.message };
   }finally{
+    btn.disabled = false; renderChat();
+  }
+}
 
 /* ============ Điều hướng dạng "trang riêng" (chỉ hiện 1 section tại 1 thời điểm) ============ */
 const VIEW_IDS = ['tin-thu-mua','kiem-dinh','tro-ly-ai','quan-ly'];
