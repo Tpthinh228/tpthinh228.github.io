@@ -128,17 +128,17 @@ async function createAuthUserWithoutSignIn(email, password){
     await deleteApp(secondaryApp);
   }
 }
-
-/* Trợ lý AI — gọi thẳng Gemini từ trình duyệt (thay cho Google Apps Script trước đây) */
 async function apiAskAI(prompt){
   if(!GEMINI_API_KEY) throw new Error('Chưa cấu hình GEMINI_API_KEY trong app.js');
-  // ĐÃ SỬA: model cũ "gemini-2.0-flash" đã bị Google shut down từ 1/6/2026 (mọi request
-  // đều lỗi 404 dù API key đúng). Đổi sang alias "gemini-flash-latest" để luôn tự động
-  // trỏ tới model Flash ổn định mới nhất, không cần sửa code mỗi lần Google đổi model.
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' + GEMINI_API_KEY;
+  // Google đã chuyển sang key dạng "AQ." — phải truyền qua header x-goog-api-key,
+  // không còn dùng ?key=... trong URL như trước nữa.
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent';
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': GEMINI_API_KEY
+    },
     body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
   });
   const json = await res.json();
