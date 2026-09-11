@@ -1209,7 +1209,7 @@ async function doLogin(){
     const found = { uid: cred.user.uid, ...snap.data() };
     currentUser = found; isAdmin = true; isSuperAdmin = found.role==='super';
     closeLogin(); renderAll(); toast('Đăng nhập thành công · ' + roleLabel(found.role), 'ok');
-  }catch(e){ errEl.style.display='block'; }
+  }catch(e){ console.error('Lỗi đăng nhập cán bộ:', e.code, e.message); errEl.style.display='block'; }
 }
 function logout(){ signOut(auth); currentUser = null; isAdmin = false; isSuperAdmin = false; renderAll(); }
 
@@ -1245,7 +1245,7 @@ async function doPersonLogin(){
     currentPersonUser = { uid: cred.user.uid, ...snap.data() };
     closePersonAuth(); renderAll();
     toast('Đăng nhập thành công · ' + personRoleLabel(currentPersonUser.role), 'ok');
-  }catch(e){ errEl.style.display='block'; }
+  }catch(e){ console.error('Lỗi đăng nhập người dùng:', e.code, e.message); errEl.style.display='block'; }
 }
 function personLogout(){ signOut(auth); currentPersonUser = null; renderAll(); }
 async function doPersonRegister(){
