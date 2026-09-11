@@ -89,12 +89,12 @@ import {
 /* !!! ĐÁNH DẤU 1: dán firebaseConfig thật của bạn vào đây
    (Console Firebase → biểu tượng bánh răng → Project settings → mục "Your apps") */
 const firebaseConfig = {
-  apiKey: "DAN_API_KEY_VAO_DAY",
-  authDomain: "DAN_AUTH_DOMAIN_VAO_DAY",
-  projectId: "DAN_PROJECT_ID_VAO_DAY",
-  storageBucket: "DAN_STORAGE_BUCKET_VAO_DAY",
-  messagingSenderId: "DAN_SENDER_ID_VAO_DAY",
-  appId: "DAN_APP_ID_VAO_DAY"
+  apiKey: "AIzaSyDuqly5ejTvMgr3a6OKNvcwGPd3jk7nlZk",
+  authDomain: "binhmy-nongnghiep.firebaseapp.com",
+  projectId: "binhmy-nongnghiep",
+  storageBucket: "binhmy-nongnghiep.firebasestorage.app",
+  messagingSenderId: "356707994338",
+  appId: "1:356707994338:web:df236f5580c0ea2731ecbb"
 };
 
 /* !!! ĐÁNH DẤU 2: dán Gemini API key vào đây nếu muốn dùng "Trợ lý AI" (lấy miễn phí tại
