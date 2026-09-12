@@ -81,7 +81,7 @@ import { initializeApp, deleteApp }
   from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  signOut, updatePassword
+  signOut, updatePassword, sendPasswordResetEmail
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, collection
@@ -108,10 +108,10 @@ const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
 const db = getFirestore(firebaseApp);
 
-/* Firebase Auth cần dạng email thật, nên "tên đăng nhập" của bạn được quy đổi thành
-   1 email giả nội bộ, người dùng không cần biết/thấy email này. */
-function adminEmail(username){ return username.trim().toLowerCase() + '@canbo.binhmy.local'; }
-function personEmail(username){ return username.trim().toLowerCase() + '@nguoidung.binhmy.local'; }
+/* Firebase Auth dùng email thật làm tên đăng nhập. */
+function adminEmail(username){ return String(username || '').trim().toLowerCase(); }
+function personEmail(username){ return String(username || '').trim().toLowerCase(); }
+function isEmail(v){ return typeof v === 'string' && /\S+@\S+\.\S+/.test(v); }
 
 /* Tạo tài khoản Firebase Auth mới MÀ KHÔNG làm mất phiên đăng nhập hiện tại.
    (Mặc định Firebase tự đăng nhập vào tài khoản vừa tạo — cần tránh khi
@@ -1216,6 +1216,7 @@ async function doLogin(){
   const u = document.getElementById('loginUser').value.trim();
   const p = document.getElementById('loginPass').value;
   const errEl = document.getElementById('loginError');
+  if(!isEmail(u)){ errEl.textContent = 'Vui lòng nhập email hợp lệ.'; errEl.style.display='block'; return; }
   try{
     const cred = await signInWithEmailAndPassword(auth, adminEmail(u), p);
     const snap = await getDoc(doc(db, 'admins', cred.user.uid));
@@ -1252,6 +1253,7 @@ async function doPersonLogin(){
   const u = document.getElementById('pu_loginUser').value.trim();
   const p = document.getElementById('pu_loginPass').value;
   const errEl = document.getElementById('personLoginError');
+  if(!isEmail(u)){ errEl.textContent = 'Vui lòng nhập email hợp lệ.'; errEl.style.display='block'; return; }
   try{
     const cred = await signInWithEmailAndPassword(auth, personEmail(u), p);
     const snap = await getDoc(doc(db, 'personUsers', cred.user.uid));
@@ -1270,12 +1272,14 @@ async function doPersonRegister(){
   const phone = document.getElementById('pu_phone').value.trim();
   const ap = role==='grower' ? document.getElementById('pu_ap').value.trim() : '';
   const err = document.getElementById('personRegisterError');
-  if(!displayName || !username || !password || !phone || (role==='grower' && !ap) || personUsers.some(x=>x.username===username)){
+  const email = personEmail(username);
+  if(!displayName || !username || !password || !phone || (role==='grower' && !ap) || !isEmail(email) || personUsers.some(x=>(x.email || personEmail(x.username))===email)){
+    err.textContent = !isEmail(email) ? 'Vui lòng nhập email hợp lệ.' : 'Thiếu thông tin hoặc tên đăng nhập đã tồn tại.';
     err.style.display='block'; return;
   }
   try{
-    const cred = await createUserWithEmailAndPassword(auth, personEmail(username), password);
-    const record = { username, role, displayName, phone, ap, createdDate: new Date().toISOString().slice(0,10) };
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    const record = { username, email, role, displayName, phone, ap, createdDate: new Date().toISOString().slice(0,10) };
     await setDoc(doc(db, 'personUsers', cred.user.uid), record);
     currentPersonUser = { uid: cred.user.uid, ...record };
     closePersonAuth(); renderAll();
@@ -1284,6 +1288,37 @@ async function doPersonRegister(){
     err.textContent = e.code==='auth/email-already-in-use' ? 'Tên đăng nhập đã tồn tại.' : ('Lỗi: ' + e.message);
     err.style.display='block';
   }
+}
+
+function openResetOverlay(){
+  const overlay = document.getElementById('resetOverlay');
+  const emailInput = document.getElementById('reset_email');
+  const errEl = document.getElementById('resetError');
+  if(!overlay || !emailInput || !errEl){ toast('Biểu mẫu quên mật khẩu hiện không khả dụng.', 'warn'); return; }
+  errEl.style.display = 'none';
+  emailInput.value = '';
+  overlay.classList.add('show');
+}
+function closeResetOverlay(){
+  const overlay = document.getElementById('resetOverlay');
+  if(!overlay){ toast('Biểu mẫu quên mật khẩu hiện không khả dụng.', 'warn'); return; }
+  overlay.classList.remove('show');
+}
+async function sendPasswordResetRequest(){
+  const overlay = document.getElementById('resetOverlay');
+  const emailInput = document.getElementById('reset_email');
+  const errEl = document.getElementById('resetError');
+  if(!overlay || !emailInput || !errEl){ toast('Biểu mẫu quên mật khẩu hiện không khả dụng.', 'warn'); return; }
+  const email = personEmail(emailInput.value);
+  errEl.style.display = 'none';
+  if(!isEmail(email)){ errEl.textContent = 'Vui lòng nhập email hợp lệ.'; errEl.style.display = 'block'; return; }
+  try{
+    await sendPasswordResetEmail(auth, email);
+  }catch(e){
+    console.error('Lỗi gửi yêu cầu đặt lại mật khẩu:', e.code, e.message);
+  }
+  closeResetOverlay();
+  toast('Nếu email hợp lệ, một liên kết đặt lại mật khẩu đã được gửi.', 'ok');
 }
 
 /* ============ Đổi mật khẩu của chính mình ============ */
@@ -1589,12 +1624,13 @@ function initRouter(){
    onclick="..." viết thẳng trong index.html chỉ gọi được hàm nằm trên window. */
 Object.assign(window, {
   askAI, closeAccountForm, closeAccountsModal, closeApplyForm, closeBuyForm, closeForm, closeHhForm,
-  closeLogin, closeOutputForm, closePersonAuth, closeProcForm, closeProductForm, closePwForm, closeQualityForm,
+  closeLogin, closeOutputForm, closePersonAuth, closeProcForm, closeProductForm, closePwForm, closeQualityForm, closeResetOverlay,
   deleteAccount, deleteHousehold, deleteOutput, deleteProcurement, deleteProduct, deleteQualityTest, deleteSeason,
   doLogin, doPersonLogin, doPersonRegister, exportCsv, logout,
   openAccountForm, openAccountsModal, openApplyForm, openBuyForm, openForm, openHhForm, openLogin,
-  openOutputForm, openPersonAuth, openProcForm, openProductForm, openPwForm, openQualityForm, personLogout,
+  openOutputForm, openPersonAuth, openProcForm, openProductForm, openPwForm, openQualityForm, openResetOverlay, personLogout,
   saveAccountForm, saveForm, saveHhForm, saveOutputForm, saveProcForm, saveProductForm, savePwForm, saveQualityForm,
+  sendPasswordResetRequest,
   submitApplication, submitBuyRequest, switchPersonAuth, toggleAccountApField, toggleApplicants, toggleBuyers,
   toggleProcStatus, toggleProductStatus, togglePuApField
 });
