@@ -1,0 +1,1838 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nông Nghiệp Xã Bình Mỹ</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="appLoader" class="app-loader" role="status" aria-live="polite">
+  <div class="app-loader-inner">
+    <span class="app-loader-spinner" aria-hidden="true"></span>
+    <span class="app-loader-text">Đang tải dữ liệu Bình Mỹ…</span>
+  </div>
+</div>
+
+<svg style="display:none" aria-hidden="true">
+  <!-- Core Navigation & System -->
+  <symbol id="icon-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 9.5L12 3l9 6.5V20a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9.5z"/>
+    <polyline points="9 22 9 12 15 12 15 22"/>
+  </symbol>
+  
+  <symbol id="icon-products" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 21v-8.5"/>
+    <path d="M12 12.5C12 7.8 8.3 5.5 4 5.5c0 5.3 3.3 8.3 8 7z"/>
+    <path d="M12 12.5c0-4.2 3.2-6.3 7-6.3 0 4.2-2.3 7.1-7 6.3z"/>
+  </symbol>
+  <symbol id="icon-sprout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 21v-8.5"/><path d="M12 12.5C12 7.8 8.3 5.5 4 5.5c0 5.3 3.3 8.3 8 7z"/><path d="M12 12.5c0-4.2 3.2-6.3 7-6.3 0 4.2-2.3 7.1-7 6.3z"/>
+  </symbol>
+
+  <symbol id="icon-quality" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+    <polyline points="9 12 11 14 15 10"/>
+  </symbol>
+
+  <symbol id="icon-procurement" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+    <line x1="3" y1="6" x2="21" y2="6"/>
+    <path d="M16 10a4 4 0 0 1-8 0"/>
+  </symbol>
+  <symbol id="icon-job" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>
+  </symbol>
+
+  <symbol id="icon-ai" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
+  </symbol>
+  <symbol id="icon-sparkles" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
+  </symbol>
+
+  <symbol id="icon-admin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>
+  </symbol>
+  <symbol id="icon-plan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>
+  </symbol>
+
+  <!-- QR System (Unified Family) -->
+  <symbol id="icon-qr-scan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+    <line x1="7" y1="12" x2="17" y2="12"/>
+  </symbol>
+  <symbol id="icon-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+    <line x1="7" y1="12" x2="17" y2="12"/>
+  </symbol>
+
+  <symbol id="icon-qr-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+    <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="3" height="3"/>
+    <path d="M17 17h4v4h-4zM7 7h.01M17 7h.01M7 17h.01M21 14v3M14 21h3"/>
+  </symbol>
+  <symbol id="icon-qrcode" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+    <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="3" height="3"/>
+    <path d="M17 17h4v4h-4zM7 7h.01M17 7h.01M7 17h.01M21 14v3M14 21h3"/>
+  </symbol>
+
+  <symbol id="icon-qr-create" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+    <rect x="3" y="14" width="7" height="7" rx="1"/><path d="M7 7h.01M17 7h.01M7 17h.01"/>
+    <line x1="18" y1="15" x2="18" y2="21"/><line x1="15" y1="18" x2="21" y2="18"/>
+  </symbol>
+
+  <symbol id="icon-printer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+    <rect x="6" y="14" width="12" height="8"/>
+  </symbol>
+
+  <symbol id="icon-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+  </symbol>
+
+  <!-- Status Icons -->
+  <symbol id="icon-check-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/><polyline points="16 9 10 15 7 12"/>
+  </symbol>
+  <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="20 6 9 17 4 12"/>
+  </symbol>
+
+  <symbol id="icon-alert-triangle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+  </symbol>
+  <symbol id="icon-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+  </symbol>
+
+  <symbol id="icon-x-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+  </symbol>
+
+  <symbol id="icon-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+  </symbol>
+
+  <symbol id="icon-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+  </symbol>
+
+  <!-- Metadata & Actions -->
+  <symbol id="icon-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+  </symbol>
+  <symbol id="icon-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+  </symbol>
+  <symbol id="icon-households" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+  </symbol>
+
+  <symbol id="icon-map-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+  </symbol>
+
+  <symbol id="icon-package" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>
+  </symbol>
+
+  <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+  </symbol>
+
+  <symbol id="icon-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+  </symbol>
+
+  <symbol id="icon-tag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>
+  </symbol>
+  <symbol id="icon-revenue" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><line x1="12" y1="6" x2="12" y2="8"/><line x1="12" y1="16" x2="12" y2="18"/>
+  </symbol>
+
+  <symbol id="icon-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+  </symbol>
+
+  <symbol id="icon-filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+  </symbol>
+
+  <symbol id="icon-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+  </symbol>
+
+  <symbol id="icon-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+  </symbol>
+
+  <symbol id="icon-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+  </symbol>
+
+  <symbol id="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+  </symbol>
+
+  <symbol id="icon-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+  </symbol>
+
+  <symbol id="icon-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+  </symbol>
+
+  <symbol id="icon-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+  </symbol>
+
+  <symbol id="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+  </symbol>
+
+  <symbol id="icon-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
+  </symbol>
+
+  <symbol id="icon-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="9 18 15 12 9 6"/>
+  </symbol>
+
+  <symbol id="icon-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>
+  </symbol>
+
+  <symbol id="icon-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="8" cy="8" r="4.3"/><path d="M11 11L20.5 20.5"/><path d="M15.2 15.2l2-2"/><path d="M18 18l2-2"/>
+  </symbol>
+
+  <symbol id="icon-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 4H5.5A1.5 1.5 0 0 0 4 5.5v13A1.5 1.5 0 0 0 5.5 20H9"/><path d="M13 8l4 4-4 4"/><path d="M17 12H9"/>
+  </symbol>
+
+  <!-- Legacy Aliases for safety -->
+  <symbol id="icon-overview" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 20h18"/><path d="M6 20v-6"/><path d="M12 20V6"/><path d="M18 20v-10"/>
+  </symbol>
+  <symbol id="icon-seasons" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 4C11 4 5 10 5 19c9 0 15-6 15-15z"/><path d="M6 18C11 13 15 9 20 4"/>
+  </symbol>
+  <symbol id="icon-output" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="1.5" y="7" width="12.5" height="9.5" rx="1"/><path d="M14 10.5h3.6l3.4 3.2v2.8H14z"/>
+    <circle cx="6" cy="18.5" r="1.7"/><circle cx="17.2" cy="18.5" r="1.7"/>
+  </symbol>
+  <symbol id="icon-area" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 12h16M12 4v16"/>
+  </symbol>
+  <symbol id="icon-yield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 7.5l9-4 9 4-9 4-9-4z"/><path d="M3 7.5v9.2l9 4 9-4V7.5"/><path d="M12 11.5v9.2"/>
+  </symbol>
+  <symbol id="icon-avg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 17l6-6.2 4 4L21 6.5"/><path d="M15 6.5h6v6"/>
+  </symbol>
+  <symbol id="icon-count" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8.5 6h12M8.5 12h12M8.5 18h12"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>
+  </symbol>
+</svg>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="#trang-chu" aria-label="Về trang chủ Bình Mỹ">
+      <div class="brand-text">
+        <strong class="brand-name">Bình Mỹ</strong>
+        <span>Ven sông Sài Gòn · TP.HCM</span>
+      </div>
+    </a>
+    <div class="topbar-right">
+      <span class="sync-pill" id="syncPill"><span class="dot"></span><span id="syncText">Đã đồng bộ</span></span>
+      <span class="clock" id="clock"></span>
+      <div id="authArea"></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap" style="padding-top:0;">
+
+  <!-- Thanh thao tác nhanh & điều hướng Desktop (Desktop Quick Actions & Navigation) -->
+  <div class="quick-nav-bar desktop-only-toolbar" id="quickNavBar">
+    <button type="button" class="quick-nav-item primary-pulse" onclick="openQrScanner()" title="Mở máy quét mã QR truy xuất nguồn gốc">
+      <svg class="icon"><use href="#icon-qr-scan"/></svg>
+      <span>Quét mã QR</span>
+    </button>
+    <button type="button" class="quick-nav-item" data-view="dr2-products" onclick="switchToDauRaProducts()">
+      <svg class="icon"><use href="#icon-products"/></svg>
+      <span>Sản phẩm đang bán</span>
+    </button>
+    <button type="button" class="quick-nav-item" data-view="dr2-demand" onclick="switchToDauRaDemand()">
+      <svg class="icon"><use href="#icon-procurement"/></svg>
+      <span>Tin thu mua</span>
+    </button>
+    <button type="button" class="quick-nav-item" data-view="kiem-dinh" onclick="switchToQuality()">
+      <svg class="icon"><use href="#icon-quality"/></svg>
+      <span>Kiểm định an toàn</span>
+    </button>
+    <button type="button" class="quick-nav-item" data-view="tro-ly-ai" onclick="switchToAI()">
+      <svg class="icon"><use href="#icon-ai"/></svg>
+      <span>Hỏi Trợ lý AI</span>
+    </button>
+    <button type="button" class="quick-nav-item nav-admin-quick" id="quickNavAdmin" data-view="quan-ly" onclick="switchToAdmin()" style="display:none;">
+      <svg class="icon"><use href="#icon-admin"/></svg>
+      <span>Quản lý cán bộ</span>
+    </button>
+    <button type="button" class="quick-nav-item" onclick="openHelpModal()">
+      <svg class="icon"><use href="#icon-help"/></svg>
+      <span>Hướng dẫn bà con</span>
+    </button>
+  </div>
+
+  <!-- SECTION: TRANG CHỦ DÀNH RIÊNG CHO MOBILE APP (Section 5, 6, 21) -->
+  <section id="trang-chu" class="mobile-home-section">
+    <div class="mobile-home-container">
+      <div class="mobile-home-banner">
+        <div class="mobile-badge-top">
+          <svg class="icon" style="width:14px;height:14px;margin:0;"><use href="#icon-map-pin"/></svg>
+          <span>Xã Bình Mỹ · Củ Chi · TP.HCM</span>
+        </div>
+        <h2>Nông nghiệp Bình Mỹ</h2>
+        <p>Nông sản sạch, an toàn, minh bạch nguồn gốc cho bà con và người tiêu dùng.</p>
+      </div>
+
+      <!-- Nút Quét QR lớn, cực kỳ dễ nhận diện (Section 6, 7, 8) -->
+      <div class="mobile-qr-hero-card" onclick="openQrScanner()">
+        <div class="mobile-qr-hero-left">
+          <div class="mobile-qr-icon-wrap">
+            <svg class="icon-hero-qr"><use href="#icon-qr-scan"/></svg>
+          </div>
+          <div class="mobile-qr-hero-text">
+            <strong>QUÉT MÃ QR NÔNG SẢN</strong>
+            <span>Đưa camera vào tem để tra cứu ngay hộ trồng, ngày hái & chứng nhận VietGAP</span>
+          </div>
+        </div>
+        <div class="mobile-qr-hero-arrow">
+          <svg class="icon"><use href="#icon-chevron-right"/></svg>
+        </div>
+      </div>
+
+      <!-- 3 Chỉ số quan trọng nhất cho Mobile (Section 21) -->
+      <div class="mobile-stats-row">
+        <div class="mobile-stat-pill" onclick="switchToDauRaProducts()">
+          <div class="stat-pill-icon"><svg class="icon"><use href="#icon-products"/></svg></div>
+          <div class="stat-pill-content">
+            <strong id="mStatProducts">0</strong>
+            <span>Sản phẩm</span>
+          </div>
+        </div>
+        <div class="mobile-stat-pill" onclick="switchToQuality()">
+          <div class="stat-pill-icon"><svg class="icon"><use href="#icon-quality"/></svg></div>
+          <div class="stat-pill-content">
+            <strong id="mStatTested">0</strong>
+            <span>Đã kiểm định</span>
+          </div>
+        </div>
+        <div class="mobile-stat-pill" onclick="switchToDauRaProducts()">
+          <div class="stat-pill-icon"><svg class="icon"><use href="#icon-check-circle"/></svg></div>
+          <div class="stat-pill-content">
+            <strong id="mStatAvailable">0</strong>
+            <span>Đang bán</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Menu thao tác nhanh dạng card lớn (Section 5, 6) -->
+      <div class="mobile-quick-actions-section">
+        <div class="mobile-section-heading">
+          <h3>Thao tác tiện ích</h3>
+          <span>Dễ dùng cho bà con</span>
+        </div>
+        <div class="mobile-actions-grid">
+          <button type="button" class="mobile-action-card" onclick="switchToDauRaProducts()">
+            <div class="action-card-icon icon-bg-green"><svg class="icon"><use href="#icon-products"/></svg></div>
+            <div class="action-card-text">
+              <strong>Sản phẩm chào bán</strong>
+              <span>Xem giá & đặt mua</span>
+            </div>
+          </button>
+          <button type="button" class="mobile-action-card" onclick="openManualLookup()">
+            <div class="action-card-icon icon-bg-blue"><svg class="icon"><use href="#icon-search"/></svg></div>
+            <div class="action-card-text">
+              <strong>Nhập mã thủ công</strong>
+              <span>Tra cứu không cần cam</span>
+            </div>
+          </button>
+          <button type="button" class="mobile-action-card" onclick="handleOpenProductForm()">
+            <div class="action-card-icon icon-bg-orange"><svg class="icon"><use href="#icon-plus"/></svg></div>
+            <div class="action-card-text">
+              <strong>Đăng bán nông sản</strong>
+              <span>Dành cho hộ vườn</span>
+            </div>
+          </button>
+          <button type="button" class="mobile-action-card" onclick="switchToQuality()">
+            <div class="action-card-icon icon-bg-purple"><svg class="icon"><use href="#icon-quality"/></svg></div>
+            <div class="action-card-text">
+              <strong>Kiểm định chất lượng</strong>
+              <span>Xem bảng dư lượng</span>
+            </div>
+          </button>
+          <button type="button" class="mobile-action-card" onclick="switchToDauRaDemand()">
+            <div class="action-card-icon icon-bg-yellow"><svg class="icon"><use href="#icon-procurement"/></svg></div>
+            <div class="action-card-text">
+              <strong>Tin cần thu mua</strong>
+              <span>Đầu mối quán ăn, chợ</span>
+            </div>
+          </button>
+          <button type="button" class="mobile-action-card" onclick="switchToAI()">
+            <div class="action-card-icon icon-bg-cyan"><svg class="icon"><use href="#icon-ai"/></svg></div>
+            <div class="action-card-text">
+              <strong>Hỏi Trợ lý AI</strong>
+              <span>Tư vấn kỹ thuật cây</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Nông sản mới cập nhật trên Mobile -->
+      <div class="mobile-featured-section">
+        <div class="mobile-section-heading">
+          <h3>Nông sản mới thu hoạch</h3>
+          <a href="javascript:void(0)" onclick="switchToDauRaProducts()" class="link-more">Xem tất cả →</a>
+        </div>
+        <div id="mobileHomeProductPreview" class="mobile-preview-cards"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION: ĐẦU RA & SẢN PHẨM (DESKTOP & MOBILE CHUNG LOGIC) -->
+  <section id="tin-thu-mua" class="active-view">
+    <div class="section-head">
+      <div>
+        <h2><svg class="icon"><use href="#icon-procurement"/></svg>Đầu ra</h2>
+        <p class="section-hint">Kết nối hộ trồng với quán ăn, chợ, tiểu thương — xem sản phẩm đang bán hoặc tin cần mua.</p>
+      </div>
+    </div>
+    <div class="subtabs" id="dauRaTabs2">
+      <button type="button" class="active" data-subtab="dr2-products">Sản phẩm đang bán</button>
+      <button type="button" data-subtab="dr2-demand">Tin thu mua đang cần</button>
+    </div>
+
+    <div class="subview active-subview" id="subview-dr2-products">
+      
+      <!-- Banner Quét QR Nông Sản Bình Mỹ nổi bật trên Desktop -->
+      <div class="qr-banner-card">
+        <div class="qr-banner-left">
+          <div class="qr-banner-badge"><svg class="icon" style="width:13px;height:13px;margin:0 4px 0 0;"><use href="#icon-sparkles"/></svg>TRUY XUẤT NGUỒN GỐC NÔNG SẢN BÌNH MỸ</div>
+          <h3 class="qr-banner-title">Quét mã QR để kiểm tra nguồn gốc & an toàn rau củ</h3>
+          <p class="qr-banner-desc">Chỉ cần đưa điện thoại quét mã QR dán trên sản phẩm để xem ngay hộ trồng, ngày hái, chứng nhận VietGAP và kết quả kiểm nghiệm an toàn.</p>
+          <div class="qr-banner-btns">
+            <button type="button" class="btn btn-qr-scan" onclick="openQrScanner()">
+              <svg class="icon"><use href="#icon-qr-scan"/></svg><span>QUÉT QR SẢN PHẨM</span>
+            </button>
+            <button type="button" class="btn btn-qr-manual" onclick="openManualLookup()">
+              <svg class="icon"><use href="#icon-search"/></svg><span>Tra cứu bằng mã sản phẩm</span>
+            </button>
+          </div>
+        </div>
+        <div class="qr-banner-right" aria-hidden="true" onclick="openQrScanner()">
+          <div class="qr-sample-box">
+            <svg class="icon-qr-sample"><use href="#icon-qr-code"/></svg>
+            <span>Bấm để quét</span>
+          </div>
+        </div>
+      </div>
+
+      <p class="section-hint" style="margin-bottom:16px;">
+        Hộ trồng rao bán nông sản sạch — quán ăn, chợ, tiểu thương xem giá, số lượng, chứng chỉ rồi bấm "Liên hệ mua".
+      </p>
+      <div class="stats-grid" id="productStats" style="margin-bottom:16px;"></div>
+      
+      <!-- DESKTOP TOOLBAR (Hiển thị trên Desktop) -->
+      <div class="toolbar product-toolbar desktop-only-toolbar">
+        <div class="toolbar-controls product-filters">
+          <input class="search-input" id="searchProduct" type="text" placeholder="🔎 Tìm rau củ, trái cây, hộ trồng, mã sản phẩm...">
+          <select id="filterProductName"><option value="all">Tất cả loại nông sản</option></select>
+          <select id="filterProductStatus">
+            <option value="all">Tất cả tình trạng</option>
+            <option value="available">Còn hàng</option>
+            <option value="soldout">Hết hàng</option>
+          </select>
+          <select id="filterProductQuality">
+            <option value="all">Tất cả kiểm định</option>
+            <option value="tested">Đã kiểm định</option>
+            <option value="untested">Chưa kiểm định</option>
+          </select>
+          <select id="filterProductCert">
+            <option value="all">Tất cả chứng nhận</option>
+            <option value="VietGAP">VietGAP</option>
+            <option value="Xuất khẩu (GlobalGAP)">Xuất khẩu (GlobalGAP)</option>
+            <option value="Chưa kiểm định">Chưa kiểm định</option>
+          </select>
+        </div>
+        <div class="toolbar-actions">
+          <button class="btn btn-primary" id="addProductBtn" onclick="handleOpenProductForm()">
+            <svg class="icon"><use href="#icon-plus"/></svg>+ Đăng sản phẩm bán
+          </button>
+        </div>
+      </div>
+
+      <!-- MOBILE SEARCH & FILTER PILLS (Hiển thị trên Mobile) -->
+      <div class="mobile-product-controls mobile-only-controls">
+        <div class="mobile-search-wrap">
+          <svg class="icon mobile-search-icon"><use href="#icon-search"/></svg>
+          <input type="text" id="mobileSearchInput" placeholder="🔎 Tìm rau củ, trái cây, hộ trồng, mã..." autocomplete="off">
+          <button type="button" id="mobileSearchClear" class="mobile-search-clear" onclick="clearMobileSearch()" style="display:none;" aria-label="Xóa tìm kiếm">
+            <svg class="icon"><use href="#icon-close"/></svg>
+          </button>
+        </div>
+        <div class="mobile-filter-chips" id="mobileFilterChips">
+          <button type="button" class="m-chip active" data-filter="all">Tất cả</button>
+          <button type="button" class="m-chip" data-filter="available">Còn hàng</button>
+          <button type="button" class="m-chip" data-filter="tested">Đã kiểm định</button>
+          <button type="button" class="m-chip" data-filter="VietGAP">VietGAP</button>
+          <button type="button" class="m-chip" data-filter="ap-bonphu">Ấp Bốn Phú</button>
+          <button type="button" class="m-chip" data-filter="ap-anhoa">Ấp An Hòa</button>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
+          <span style="font-size:12.5px;color:var(--ink-soft);" id="mobileProductCountLabel">Đang tải sản phẩm...</span>
+          <button type="button" class="btn btn-primary btn-sm" onclick="handleOpenProductForm()">
+            <svg class="icon"><use href="#icon-plus"/></svg>Đăng bán
+          </button>
+        </div>
+      </div>
+
+      <!-- PRODUCT MARKETPLACE GRID (Hiển thị dạng Grid trực quan cho cả Desktop & Mobile) -->
+      <div class="product-marketplace-container">
+        <div id="desktopProductCountLabel" class="desktop-product-count desktop-only-toolbar" style="font-size:13px;color:var(--ink-soft);margin-bottom:10px;font-weight:500;"></div>
+        <div id="productMarketplaceGrid" class="product-marketplace-grid"></div>
+        <div id="mobileProductCards" class="mobile-product-grid" style="display:none;"></div>
+      </div>
+    </div>
+
+    <div class="subview" id="subview-dr2-demand">
+      <div class="proc-hero">
+        <div><span class="proc-kicker">TIN THU MUA</span><h3>Những đơn vị đang tìm mua nông sản Bình Mỹ</h3><p>Tìm đầu ra phù hợp cho rau củ, trái cây và nông sản địa phương.</p></div>
+        <div class="proc-hero-points"><span>✓ Nhu cầu đang mở</span><span>✓ Có thông tin số lượng</span><span>✓ Liên hệ trực tiếp</span></div>
+      </div>
+      <p class="section-hint" style="margin-bottom:16px;">
+        <strong>Kênh bổ sung, không thay thế thương lái/chợ đầu mối quen thuộc</strong> — dùng cho phần hàng dư
+        hoặc lô đã kiểm định tốt, để thử giá cao hơn (siêu thị, xuất khẩu, du lịch cộng đồng). Bấm "Gửi chào hàng" để liên hệ, không ràng buộc.
+      </p>
+      <div class="stats-grid" id="procStats" style="margin-bottom:16px;"></div>
+      <div class="toolbar">
+        <div class="toolbar-controls">
+          <input class="search-input" id="searchProc" type="text" placeholder="Tìm theo tiêu đề, cây trồng, đối tác, ấp...">
+          <select id="filterProcStatus">
+            <option value="all">Tất cả trạng thái</option>
+            <option value="open">Đang tuyển đầu mối</option>
+            <option value="closed">Đã đủ nguồn hàng</option>
+          </select>
+          <select id="filterProcCrop"><option value="all">Tất cả cây trồng</option></select>
+        </div>
+        <button class="btn btn-primary" id="addProcBtn" onclick="openProcForm()" style="display:none;">+ Đăng tin thu mua</button>
+      </div>
+      <div id="procList" class="proc-list"></div>
+      <div class="proc-note-panel"><strong>Lưu ý</strong><p>Đây là kênh bổ sung để kết nối hộ trồng với siêu thị, cửa hàng, thương lái và các đối tác địa phương. Hãy xem kỹ yêu cầu, số lượng và thời hạn trước khi gửi chào hàng.</p></div>
+    </div>
+  </section>
+
+  <section id="quan-ly">
+    <div class="section-head">
+      <div>
+        <h2><svg class="icon"><use href="#icon-plan"/></svg>Quản lý (dành cho cán bộ)</h2>
+        <p class="section-hint">Số liệu tổng quan, nhập/sửa mùa vụ, hộ trồng, quy hoạch và giao dịch đầu ra. Đăng nhập ở góc trên để chỉnh sửa.</p>
+      </div>
+    </div>
+    <div class="subtabs" id="quanLyTabs">
+      <button type="button" class="active" data-subtab="ql-tongquan">Tổng quan</button>
+      <button type="button" data-subtab="ql-muavu">Mùa vụ</button>
+      <button type="button" data-subtab="ql-hotrong">Hộ trồng</button>
+      <button type="button" data-subtab="ql-quyhoach">Quy hoạch</button>
+      <button type="button" data-subtab="ql-daura">Đầu ra</button>
+    </div>
+
+    <div class="subview active-subview" id="subview-ql-tongquan">
+    <div class="hero">
+      <div class="hero-card">
+        <svg class="hero-blobs" viewBox="0 0 900 260" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0,90 Q140,10 300,60 T620,40 T900,90 L900,0 L0,0 Z" fill="#E6F6E9"></path>
+          <path d="M0,260 Q180,180 380,220 T760,190 T900,260 Z" fill="#E7F1FC"></path>
+          <ellipse cx="760" cy="70" rx="140" ry="70" fill="#FDEEE3" opacity="0.8"></ellipse>
+          <ellipse cx="120" cy="220" rx="120" ry="60" fill="#F0EBFC" opacity="0.7"></ellipse>
+          <!-- dòng sông cách điệu -->
+          <path d="M0,175 Q220,150 450,178 T900,168" stroke="#8FC7EA" stroke-width="26" fill="none" opacity="0.55" stroke-linecap="round"></path>
+          <!-- nhánh cây ăn quả cách điệu ven bờ: chôm chôm (đỏ cam), bòn bon & sơ ri (vàng/đỏ) -->
+          <g opacity="0.9" fill="none" stroke="#2F9E44" stroke-width="4" stroke-linecap="round">
+            <path d="M90,215 C90,185 70,170 55,160"></path>
+            <path d="M100,215 C100,180 105,160 100,140"></path>
+            <path d="M110,215 C112,185 130,170 140,158"></path>
+            <path d="M250,225 C250,195 232,180 218,168"></path>
+            <path d="M262,225 C262,190 266,168 260,150"></path>
+            <path d="M274,225 C276,195 292,182 302,170"></path>
+          </g>
+          <g stroke="none">
+            <circle cx="52" cy="154" r="7" fill="#E8590C"></circle>
+            <circle cx="64" cy="163" r="6" fill="#F76707"></circle>
+            <circle cx="97" cy="134" r="7" fill="#E8590C"></circle>
+            <circle cx="109" cy="143" r="6" fill="#F76707"></circle>
+            <circle cx="137" cy="152" r="7" fill="#E8590C"></circle>
+            <circle cx="149" cy="161" r="6" fill="#F76707"></circle>
+            <circle cx="215" cy="162" r="6" fill="#E8B923"></circle>
+            <circle cx="227" cy="171" r="5" fill="#F2CC4C"></circle>
+            <circle cx="257" cy="144" r="6" fill="#E8B923"></circle>
+            <circle cx="269" cy="153" r="5" fill="#F2CC4C"></circle>
+            <circle cx="299" cy="164" r="5" fill="#E03131"></circle>
+            <circle cx="310" cy="172" r="4" fill="#F03E3E"></circle>
+          </g>
+        </svg>
+        <div class="hero-content">
+          <h1><svg class="icon-lg" style="color:var(--paddy-deep);vertical-align:-10px;margin-right:8px;"><use href="#icon-seasons"/></svg>Đặc sản cây ăn quả Bình Mỹ</h1>
+          <p>
+            Chôm chôm, sơ ri, bòn bon trồng tại các vườn cây ăn trái ở ấp Bốn Phú và An Hòa — đặc sản ven sông Sài Gòn, đang phát triển gắn với du lịch cộng đồng.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div id="smartAlertPanel" class="smart-alert-panel"></div>
+    <div id="quickActionsBar" class="quick-actions"></div>
+
+    <div class="stats-grid" id="statsGrid"></div>
+
+    <div class="overview-grid">
+      <div class="panel chart-box">
+        <h3><svg class="icon" style="width:16px;height:16px;color:var(--paddy-deep);"><use href="#icon-overview"/></svg>Sản lượng theo mùa vụ</h3>
+        <canvas id="yieldChart" height="90"></canvas>
+      </div>
+      <div class="panel">
+        <h3><svg class="icon" style="width:16px;height:16px;color:var(--river-deep);"><use href="#icon-ai"/></svg>Hoạt động gần đây</h3>
+        <div class="activity-list" id="activityList"></div>
+      </div>
+    </div>
+  </div>
+
+    <div class="subview" id="subview-ql-muavu">
+    <div class="section-head">
+      <div>
+        <h2><svg class="icon"><use href="#icon-seasons"/></svg>Danh sách mùa vụ</h2>
+        <p class="section-hint">Bấm tiêu đề cột để sắp xếp. Xem năng suất và tiến độ từng vụ.</p>
+      </div>
+    </div>
+    <div class="toolbar">
+      <div class="toolbar-controls">
+        <input class="search-input" id="searchSeason" type="text" placeholder="Tìm theo tên, cây trồng, ấp...">
+        <select id="filterStatus">
+          <option value="all">Tất cả trạng thái</option>
+          <option value="plan">Lên kế hoạch</option>
+          <option value="growing">Đang canh tác</option>
+          <option value="done">Đã thu hoạch</option>
+        </select>
+        <select id="filterSeasonCrop"><option value="all">Tất cả cây trồng</option></select>
+        <select id="filterSeasonAp"><option value="all">Tất cả các ấp</option></select>
+      </div>
+      <div class="toolbar-controls">
+        <button class="btn" id="exportBtn" onclick="exportCsv()">Xuất CSV</button>
+        <button class="btn btn-primary" id="addBtn" onclick="openForm()" style="display:none;">+ Thêm mùa vụ</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th data-sort="name" class="sortable">Tên mùa vụ / sản phẩm</th>
+          <th data-sort="crop" class="sortable">Cây trồng</th>
+          <th data-sort="household" class="sortable">Hộ trồng</th>
+          <th data-sort="region" class="sortable">Ấp</th>
+          <th data-sort="start" class="sortable">Bắt đầu</th>
+          <th data-sort="end" class="sortable">Kết thúc</th>
+          <th data-sort="area" class="sortable">Diện tích (ha)</th>
+          <th data-sort="yieldTon" class="sortable">Sản lượng (tấn)</th>
+          <th data-sort="productivity" class="sortable">Năng suất (tấn/ha)</th>
+          <th data-sort="price" class="sortable">Giá TT (đ/kg)</th>
+          <th data-sort="revenue" class="sortable">Giá trị ước tính (đ)</th>
+          <th>Đặc sản</th><th>Trạng thái</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+    </div>
+  </div>
+
+    <div class="subview" id="subview-ql-hotrong">
+      <div class="toolbar">
+        <div class="toolbar-controls">
+          <input class="search-input" id="searchHh" type="text" placeholder="Tìm theo tên chủ hộ, cây trồng...">
+          <select id="filterAp"><option value="all">Tất cả các ấp</option></select>
+        </div>
+        <button class="btn btn-primary" id="addHhBtn" onclick="openHhForm()" style="display:none;">+ Thêm hộ trồng</button>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="name" class="sortable">Chủ hộ</th>
+            <th data-sort="ap" class="sortable">Ấp</th>
+            <th data-sort="crop" class="sortable">Cây trồng chính</th>
+            <th data-sort="area" class="sortable">Diện tích canh tác (ha)</th>
+            <th data-sort="years" class="sortable">Số năm canh tác</th>
+            <th>Điện thoại</th><th>Ghi chú</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="hhTableBody"></tbody>
+      </table>
+      </div>
+    </div>
+
+    <div class="subview" id="subview-ql-quyhoach">
+      <p class="section-hint" style="margin-bottom:16px;">Số hộ, diện tích và cây trồng chủ lực theo từng ấp.</p>
+      <div class="stats-grid" id="wardSummary" style="margin-top:0;margin-bottom:16px;"></div>
+      <div class="panel chart-box">
+        <canvas id="wardAreaChart" height="90"></canvas>
+      </div>
+    </div>
+
+    <div class="subview" id="subview-ql-daura">
+      <div class="stats-grid" id="outputStats" style="margin-bottom:16px;"></div>
+      <div class="toolbar">
+        <div class="toolbar-controls">
+          <input class="search-input" id="searchOutput" type="text" placeholder="Tìm theo mùa vụ, đối tác, kênh tiêu thụ...">
+          <select id="filterOutputStatus">
+            <option value="all">Tất cả trạng thái</option>
+            <option value="negotiating">Đang đàm phán</option>
+            <option value="done">Đã giao hàng</option>
+            <option value="cancelled">Đã hủy</option>
+          </select>
+          <select id="filterOutputChannel">
+            <option value="all">Tất cả kênh tiêu thụ</option>
+            <option value="Chợ đầu mối">Chợ đầu mối</option>
+            <option value="Siêu thị / cửa hàng thực phẩm sạch">Siêu thị / cửa hàng thực phẩm sạch</option>
+            <option value="Thương lái">Thương lái</option>
+            <option value="Xuất khẩu">Xuất khẩu</option>
+            <option value="Du lịch cộng đồng / bán trực tiếp">Du lịch cộng đồng / bán trực tiếp</option>
+            <option value="Khác">Khác</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="addOutputBtn" onclick="openOutputForm()" style="display:none;">+ Thêm đầu ra</button>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Mùa vụ / lô hàng</th><th>Đối tác thu mua</th><th>Kênh tiêu thụ</th><th>Khối lượng (tấn)</th>
+            <th>Giá bán (đ/kg)</th><th>Thành tiền (đ)</th><th>Ngày giao</th><th>Trạng thái</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="outputTableBody"></tbody>
+      </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="kiem-dinh">
+    <div class="section-head">
+      <div>
+        <h2><svg class="icon"><use href="#icon-quality"/></svg>Kiểm định chất lượng</h2>
+        <p class="section-hint">Kết quả xét nghiệm dư lượng, nồng độ các chất so với ngưỡng cho phép — làm cơ sở cấp chứng nhận VietGAP/an toàn thực phẩm.</p>
+      </div>
+    </div>
+    <details class="panel" style="margin-bottom:16px;">
+      <summary style="cursor:pointer;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;">Bảng tra ngưỡng tiêu chuẩn tham khảo (bấm để xem)</summary>
+      <div style="margin-top:14px;">
+      <p class="section-hint" style="margin-bottom:14px;">Số liệu tham khảo, đối chiếu QCVN hiện hành khi kiểm định chính thức.</p>
+
+      <p style="font-size:13px;font-weight:600;margin-bottom:8px;">1. Nitrat (NO3-) theo loại rau — mg/kg</p>
+      <div class="table-wrap" style="margin-bottom:16px;">
+        <table>
+          <thead><tr><th>Loại rau</th><th>Ngưỡng cho phép (mg/kg)</th></tr></thead>
+          <tbody>
+            <tr><td>Xà lách</td><td>1.500</td></tr>
+            <tr><td>Rau gia vị (rau thơm...)</td><td>600</td></tr>
+            <tr><td>Bắp cải, súp lơ, củ cải, su hào, tỏi</td><td>500</td></tr>
+            <tr><td>Hành lá, bầu bí, ớt cây, cà tím</td><td>400</td></tr>
+            <tr><td>Ngô rau</td><td>300</td></tr>
+            <tr><td>Khoai tây, cà rốt</td><td>250</td></tr>
+            <tr><td>Đậu ăn quả, măng tây, ớt ngọt</td><td>200</td></tr>
+            <tr><td>Cà chua, dưa chuột</td><td>150</td></tr>
+            <tr><td>Hành tây</td><td>80</td></tr>
+            <tr><td>Dưa hấu</td><td>60</td></tr>
+            <tr><td>Ngưỡng chung WHO/EC cho rau tươi (khi không có mức riêng theo loại)</td><td>≤ 300</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p style="font-size:13px;font-weight:600;margin-bottom:8px;">2. Kim loại nặng — mg/kg (trong nước vs. xuất khẩu EU)</p>
+      <div class="table-wrap" style="margin-bottom:16px;">
+        <table>
+          <thead><tr><th>Chỉ tiêu</th><th>Trong nước (QCVN 8-2:2011/BYT)</th><th>Xuất khẩu EU (Quy định EC 1881/2006)</th></tr></thead>
+          <tbody>
+            <tr><td>Cadimi (Cd) — rau ăn lá</td><td>≤ 0,2</td><td>&lt; 0,1</td></tr>
+            <tr><td>Cadimi (Cd) — rau củ, quả khác</td><td>0,05 – 0,1</td><td>&lt; 0,05</td></tr>
+            <tr><td>Chì (Pb) — quả tươi</td><td>≤ 0,1</td><td>&lt; 0,1</td></tr>
+            <tr><td>Asen (As), Thủy ngân (Hg)</td><td colspan="2">Đối chiếu trực tiếp QCVN 8-2:2011/BYT theo nhóm thực phẩm cụ thể khi gửi mẫu — chưa có mức phổ quát cho mọi loại rau</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p style="font-size:13px;font-weight:600;margin-bottom:8px;">3. Dư lượng thuốc BVTV</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Trường hợp</th><th>Ngưỡng tham khảo</th></tr></thead>
+          <tbody>
+            <tr><td>Hoạt chất có MRL (mức dư lượng tối đa) riêng đã công bố</td><td>Theo đúng mức MRL của hoạt chất đó (tra theo Thông tư của Bộ Y tế/Bộ NN&PTNT hoặc Codex)</td></tr>
+            <tr><td>Hoạt chất chưa có MRL riêng — mức mặc định phổ biến khi xuất khẩu (EU, Nhật)</td><td>0,01 mg/kg</td></tr>
+            <tr><td>Mục tiêu lý tưởng để vào chuỗi siêu thị/du lịch cộng đồng</td><td>Không phát hiện dư lượng (0 mg/kg)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="section-hint" style="margin-top:10px;">Gợi ý: ngưng bón đạm ít nhất 10–15 ngày trước thu hoạch để giảm nitrat; tuân thủ thời gian cách ly thuốc BVTV; nếu nhắm xuất khẩu, test thêm đa dư lượng và kim loại nặng giữa vụ.</p>
+      </div>
+    </details>
+
+    <div class="stats-grid" id="qualityStats" style="margin-bottom:16px;"></div>
+    <div class="panel" style="margin-bottom:16px;">
+      <h3>Chứng nhận theo mùa vụ</h3>
+      <p class="section-hint" style="margin-bottom:12px;">Một mùa vụ được xem là "Đạt" ở một chuẩn khi mọi chỉ tiêu đã kiểm định theo chuẩn đó đều Đạt (và có ít nhất 1 kết quả); "Chưa kiểm định" nếu chưa có dữ liệu cho chuẩn đó.</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Mùa vụ / lô hàng</th><th>VietGAP / Nội địa</th><th>Siêu thị trong nước</th><th>Xuất khẩu</th></tr></thead>
+        <tbody id="certTableBody"></tbody>
+      </table>
+      </div>
+    </div>
+    <div class="toolbar">
+      <div class="toolbar-controls">
+        <input class="search-input" id="searchQuality" type="text" placeholder="Tìm theo mùa vụ, chỉ tiêu, đơn vị kiểm định...">
+        <select id="filterQualityResult">
+          <option value="all">Tất cả kết quả</option>
+          <option value="pass">Đạt</option>
+          <option value="fail">Không đạt</option>
+          <option value="pending">Chờ kết quả</option>
+        </select>
+        <select id="filterQualityStandard">
+          <option value="all">Tất cả tiêu chuẩn</option>
+          <option value="VietGAP / Nội địa">VietGAP / Nội địa</option>
+          <option value="Siêu thị trong nước">Siêu thị trong nước</option>
+          <option value="Xuất khẩu (GlobalGAP/MRL quốc tế)">Xuất khẩu (GlobalGAP/MRL quốc tế)</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" id="addQualityBtn" onclick="openQualityForm()" style="display:none;">+ Thêm lần kiểm định</button>
+    </div>
+    <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Mùa vụ / lô hàng</th><th>Chỉ tiêu kiểm nghiệm</th><th>Tiêu chuẩn áp dụng</th><th>Kết quả đo</th><th>Ngưỡng cho phép</th>
+          <th>Ngày kiểm</th><th>Đơn vị kiểm định</th><th>Kết quả</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="qualityTableBody"></tbody>
+    </table>
+    </div>
+  </section>
+
+  <section id="tro-ly-ai">
+    <div class="section-head">
+      <div>
+        <h2><svg class="icon"><use href="#icon-ai"/></svg>Trợ lý Nông Nghiệp AI</h2>
+        <p class="section-hint">Tư vấn kỹ thuật canh tác, phân tích năng suất, tra cứu kiểm định và đề xuất kết nối đầu ra dựa trên dữ liệu thực tế của xã Bình Mỹ.</p>
+      </div>
+      <div>
+        <button class="btn btn-sm" onclick="clearChatHistory()" title="Xóa lịch sử hội thoại"><svg class="icon" style="width:14px;height:14px;"><use href="#icon-trash"/></svg>Xóa lịch sử</button>
+      </div>
+    </div>
+
+    <div class="ai-box">
+      <div style="font-size:12.5px;font-weight:600;color:var(--ink-soft);margin-bottom:8px;">Gợi ý câu hỏi nhanh:</div>
+      <div class="ai-suggestions" id="aiSuggestions"></div>
+      <div class="chat-log" id="chatLog"></div>
+      <div class="ai-input-row">
+        <textarea id="aiQuestion" placeholder="Hỏi bất kỳ điều gì về mùa vụ, kiểm định, giá cả, đầu ra của Bình Mỹ... (Nhấn Enter để gửi)"></textarea>
+        <button class="btn btn-primary" id="askAiBtn" onclick="askAI()">
+          <span class="btn-text">Gửi câu hỏi</span>
+        </button>
+      </div>
+      <div style="font-size:11.5px;color:var(--ink-faint);margin-top:8px;">* Trợ lý tổng hợp và đối chiếu trực tiếp dữ liệu mùa vụ, kiểm định và cung cầu xã Bình Mỹ.</div>
+    </div>
+  </section>
+
+</div>
+
+<!-- Modal: thêm/sửa mùa vụ -->
+<div class="overlay" id="formOverlay" role="dialog" aria-modal="true" aria-labelledby="formTitle">
+  <div class="modal">
+    <button class="modal-close" onclick="closeForm()" aria-label="Đóng">×</button>
+    <h3 id="formTitle">Thêm mùa vụ</h3>
+    <input type="hidden" id="editId">
+    <div class="field" id="f_name_field">
+      <label>Tên mùa vụ <span class="req">*</span></label>
+      <input id="f_name" placeholder="VD: Chôm chôm vụ Hè Thu 2026">
+      <div class="field-error-msg" id="f_name_err"></div>
+    </div>
+    <div class="field-row">
+      <div class="field" id="f_crop_field">
+        <label>Cây trồng <span class="req">*</span></label>
+        <input id="f_crop" placeholder="VD: Chôm chôm">
+        <div class="field-error-msg" id="f_crop_err"></div>
+      </div>
+      <div class="field">
+        <label>Hộ trồng liên kết</label>
+        <select id="f_household"><option value="">— Không xác định —</option></select>
+      </div>
+    </div>
+    <div class="field" id="f_region_field">
+      <label>Ấp <span class="req">*</span></label>
+      <input id="f_region" list="apList" placeholder="VD: Ấp Bốn Phú">
+      <datalist id="apList"><option value="Ấp Bốn Phú"></option><option value="Ấp An Hòa"></option></datalist>
+      <div class="field-error-msg" id="f_region_err"></div>
+    </div>
+    <div class="field-row">
+      <div class="field" id="f_start_field">
+        <label>Ngày bắt đầu</label>
+        <input id="f_start" type="date">
+      </div>
+      <div class="field" id="f_end_field">
+        <label>Ngày kết thúc / Thu hoạch dự kiến</label>
+        <input id="f_end" type="date">
+        <div class="field-error-msg" id="f_end_err"></div>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field" id="f_area_field">
+        <label>Diện tích (ha) <span class="req">*</span></label>
+        <input id="f_area" type="number" step="0.01" min="0" placeholder="VD: 1.5">
+        <div class="field-error-msg" id="f_area_err"></div>
+      </div>
+      <div class="field" id="f_yield_field">
+        <label>Sản lượng (tấn)</label>
+        <input id="f_yield" type="number" step="0.01" min="0" placeholder="VD: 18">
+        <div class="field-error-msg" id="f_yield_err"></div>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field" id="f_price_field">
+        <label>Giá bán tham khảo (đ/kg)</label>
+        <input id="f_price" type="number" step="1000" min="0" placeholder="VD: 25000">
+        <div class="field-error-msg" id="f_price_err"></div>
+      </div>
+      <div class="field">
+        <label>Trạng thái</label>
+        <select id="f_status">
+          <option value="plan">Lên kế hoạch</option>
+          <option value="growing">Đang canh tác</option>
+          <option value="done">Đã thu hoạch</option>
+        </select>
+      </div>
+    </div>
+    <div class="field" style="display:flex;align-items:center;gap:8px;">
+      <input id="f_specialty" type="checkbox" style="width:auto;">
+      <label style="margin:0;">Sản phẩm đặc sản của xã Bình Mỹ</label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeForm()">Hủy</button>
+      <button class="btn btn-primary" id="f_saveBtn" onclick="saveForm()"><span class="btn-text">Lưu mùa vụ</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: đăng ký / đăng nhập cho hộ trồng & quán-chợ -->
+<div class="overlay overlay-center" id="personAuthOverlay">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closePersonAuth()" aria-label="Đóng">×</button>
+    <h3 id="personAuthTitle">Đăng nhập</h3>
+
+    <div id="personLoginView">
+      <div class="field"><label>Email</label><input id="pu_loginUser" type="email" placeholder="ten@vidu.com"></div>
+      <div class="field"><label>Mật khẩu</label><input id="pu_loginPass" type="password" placeholder="••••••"></div>
+      <div id="personLoginError" class="field-error" style="margin-bottom:0;">Sai email hoặc mật khẩu.</div>
+      <div class="modal-actions" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <span style="display:flex;flex-direction:column;gap:4px;">
+          <a href="#" onclick="switchPersonAuth('register');return false;" style="font-size:12.5px;color:var(--river-deep);">Chưa có tài khoản? Đăng ký</a>
+          <a href="#" onclick="closePersonAuth();openResetOverlay();return false;" style="font-size:12.5px;color:var(--river-deep);">Quên mật khẩu?</a>
+        </span>
+        <button class="btn btn-primary" onclick="doPersonLogin()">Đăng nhập</button>
+      </div>
+    </div>
+
+    <div id="personRegisterView" style="display:none;">
+      <div class="field">
+        <label>Bạn là</label>
+        <select id="pu_role" onchange="togglePuApField()">
+          <option value="grower">Hộ trồng (đăng bán sản phẩm)</option>
+          <option value="buyer">Quán ăn / Chợ (đăng tin cần mua)</option>
+        </select>
+      </div>
+      <div class="field"><label>Tên hiển thị</label><input id="pu_displayName" placeholder="VD: Nguyễn Văn Bảy hoặc Quán cơm Ba Miền"></div>
+      <div class="field-row">
+        <div class="field"><label>Email</label><input id="pu_regUser" type="email" placeholder="ten@vidu.com"></div>
+        <div class="field"><label>Mật khẩu</label><input id="pu_regPass" type="password" placeholder="••••••"></div>
+      </div>
+      <div class="field"><label>Số điện thoại</label><input id="pu_phone" placeholder="VD: 09xx xxx xxx"></div>
+      <div class="field" id="pu_ap_field">
+        <label>Ấp</label>
+        <input id="pu_ap" list="apList7" placeholder="VD: Ấp Bốn Phú">
+        <datalist id="apList7"><option value="Ấp Bốn Phú"></option><option value="Ấp An Hòa"></option></datalist>
+      </div>
+      <div id="personRegisterError" class="field-error" style="margin-bottom:0;">Vui lòng nhập đủ thông tin, email có thể đã được sử dụng.</div>
+      <div class="modal-actions" style="justify-content:space-between;align-items:center;">
+        <a href="#" onclick="switchPersonAuth('login');return false;" style="font-size:12.5px;color:var(--river-deep);">Đã có tài khoản? Đăng nhập</a>
+        <button class="btn btn-primary" onclick="doPersonRegister()">Đăng ký</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: quên mật khẩu -->
+<div class="overlay overlay-center" id="resetOverlay">
+  <div class="modal" style="max-width:360px;">
+    <button class="modal-close" onclick="closeResetOverlay()" aria-label="Đóng">×</button>
+    <h3>Quên mật khẩu</h3>
+    <p class="section-hint" style="margin:-4px 0 14px;">Nhập email đã đăng ký, hệ thống sẽ gửi liên kết đặt lại mật khẩu.</p>
+    <div class="field"><label>Email</label><input id="reset_email" type="email" placeholder="ten@vidu.com"></div>
+    <div id="resetError" class="field-error" style="margin-bottom:0;">Vui lòng nhập email hợp lệ.</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeResetOverlay()">Hủy</button>
+      <button class="btn btn-primary" onclick="sendPasswordResetRequest()">Gửi liên kết</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: đổi mật khẩu của chính mình -->
+<div class="overlay overlay-center" id="pwOverlay">
+  <div class="modal" style="max-width:360px;">
+    <button class="modal-close" onclick="closePwForm()" aria-label="Đóng">×</button>
+    <h3>Đổi mật khẩu của bạn</h3>
+    <div class="field"><label>Tài khoản</label><input id="pw_user" disabled></div>
+    <div class="field"><label>Mật khẩu mới</label><input id="pw_pass" type="password" placeholder="••••••"></div>
+    <div class="field"><label>Nhập lại mật khẩu mới</label><input id="pw_pass2" type="password" placeholder="••••••"></div>
+    <div id="pwError" class="field-error" style="margin-bottom:0;">Mật khẩu nhập lại không khớp hoặc để trống.</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closePwForm()">Hủy</button>
+      <button class="btn btn-primary" onclick="savePwForm()">Lưu</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: quản lý tài khoản (chỉ Quản trị viên xã) -->
+<div class="overlay" id="accountsOverlay">
+  <div class="modal" style="max-width:640px;">
+    <button class="modal-close" onclick="closeAccountsModal()" aria-label="Đóng">×</button>
+    <h3><svg class="icon"><use href="#icon-households"/></svg>Quản lý tài khoản</h3>
+    <p class="section-hint" style="margin:-8px 0 14px;">
+      <strong>Quản trị viên xã</strong>: toàn quyền thêm/sửa/xóa mọi dữ liệu và quản lý tài khoản.
+      <strong>Cán bộ ấp</strong>: chỉ thêm/sửa/xóa dữ liệu (mùa vụ, hộ trồng, kiểm định, đầu ra) thuộc đúng ấp được phân công.
+      Lưu ý: mật khẩu được quản lý bởi Firebase Authentication (đã mã hoá, không lưu dạng thường); tuy nhiên phân quyền theo vai trò/ấp ở trên chỉ áp dụng ở giao diện — cần cấu hình thêm Firestore Security Rules để chặn ở tầng cơ sở dữ liệu.
+    </p>
+    <div class="toolbar">
+      <div></div>
+      <button class="btn btn-primary btn-sm" onclick="openAccountForm()">+ Thêm tài khoản</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Tài khoản</th><th>Vai trò</th><th>Ấp phụ trách</th><th></th></tr></thead>
+        <tbody id="accountsTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: thêm/sửa tài khoản -->
+<div class="overlay" id="accountFormOverlay">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closeAccountForm()" aria-label="Đóng">×</button>
+    <h3 id="accountFormTitle">Thêm tài khoản</h3>
+    <input type="hidden" id="acc_editUser">
+    <div class="field"><label>Email đăng nhập</label><input id="acc_user" type="email" placeholder="VD: canbo.bonphu@gmail.com"></div>
+    <div class="field"><label id="acc_pass_label">Mật khẩu</label><input id="acc_pass" type="password" placeholder="••••••"></div>
+    <div class="field">
+      <label>Vai trò</label>
+      <select id="acc_role" onchange="toggleAccountApField()">
+        <option value="super">Quản trị viên xã (toàn quyền)</option>
+        <option value="ward">Cán bộ ấp (giới hạn theo ấp)</option>
+      </select>
+    </div>
+    <div class="field" id="acc_ap_field">
+      <label>Ấp phụ trách</label>
+      <input id="acc_ap" list="apList3" placeholder="VD: Ấp Bốn Phú">
+      <datalist id="apList3"><option value="Ấp Bốn Phú"></option><option value="Ấp An Hòa"></option></datalist>
+    </div>
+    <div id="accountFormError" class="field-error" style="margin-bottom:0;">Vui lòng nhập đủ tài khoản/mật khẩu hợp lệ.</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeAccountForm()">Hủy</button>
+      <button class="btn btn-primary" onclick="saveAccountForm()">Lưu</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: nhập dữ liệu test từ JSON (chỉ Quản trị viên xã) -->
+<div class="overlay" id="testDataImportOverlay" role="dialog" aria-modal="true" aria-labelledby="testDataImportTitle">
+  <div class="modal test-import-modal">
+    <button class="modal-close" onclick="closeTestDataImportModal()" aria-label="Đóng">×</button>
+    <h3 id="testDataImportTitle">Nhập dữ liệu test từ JSON</h3>
+    <p class="section-hint test-import-description">Dùng để nạp nhanh dữ liệu mẫu vào hệ thống phục vụ kiểm thử. Chỉ dành cho Quản trị viên xã.</p>
+
+    <div class="field">
+      <label class="btn test-import-file-picker" for="testDataImportFile">Chọn file JSON</label>
+      <input id="testDataImportFile" class="test-import-file-input" type="file" accept=".json,application/json" onchange="readTestDataImportFile(this)">
+    </div>
+    <div id="testDataImportFileName" class="test-import-file-name" aria-live="polite" hidden></div>
+
+    <div id="testDataImportPreview" class="test-import-preview" hidden>
+      <div class="test-import-valid">✓ JSON hợp lệ</div>
+      <div class="test-import-heading">Dữ liệu phát hiện:</div>
+      <div id="testDataImportSummary" class="test-import-summary"></div>
+      <div id="testDataImportNotice" class="test-import-notice" aria-live="polite"></div>
+    </div>
+    <div id="testDataImportStatus" class="test-import-status" aria-live="polite"></div>
+
+    <fieldset class="test-import-mode">
+      <legend>Chế độ nhập:</legend>
+      <label><input type="radio" name="testDataImportMode" value="replace" checked> Thay thế dữ liệu hiện tại</label>
+      <p>⚠️ Chế độ này sẽ ghi đè dữ liệu hiện tại của các mục được nhập.</p>
+      <label><input type="radio" name="testDataImportMode" value="append"> Thêm vào dữ liệu hiện tại</label>
+    </fieldset>
+
+    <button type="button" class="btn btn-sm" onclick="downloadSampleTestJson()">Tải file JSON mẫu</button>
+    <div class="modal-actions" style="flex-wrap:wrap;">
+      <button type="button" class="btn" onclick="closeTestDataImportModal()">Hủy</button>
+      <button type="button" class="btn btn-primary" id="testDataImportSubmit" onclick="importTestData()">Nhập dữ liệu</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: thêm/sửa hộ trồng -->
+<div class="overlay" id="hhOverlay" role="dialog" aria-modal="true" aria-labelledby="hhFormTitle">
+  <div class="modal">
+    <button class="modal-close" onclick="closeHhForm()" aria-label="Đóng">×</button>
+    <h3 id="hhFormTitle">Thêm hộ trồng</h3>
+    <input type="hidden" id="hh_editId">
+    <div class="field" id="hh_name_field">
+      <label>Tên chủ hộ <span class="req">*</span></label>
+      <input id="hh_name" placeholder="VD: Nguyễn Văn Bảy">
+      <div class="field-error-msg" id="hh_name_err"></div>
+    </div>
+    <div class="field-row">
+      <div class="field" id="hh_ap_field">
+        <label>Ấp <span class="req">*</span></label>
+        <input id="hh_ap" list="apList2" placeholder="VD: Ấp Bốn Phú">
+        <datalist id="apList2"><option value="Ấp Bốn Phú"></option><option value="Ấp An Hòa"></option></datalist>
+        <div class="field-error-msg" id="hh_ap_err"></div>
+      </div>
+      <div class="field" id="hh_crop_field">
+        <label>Cây trồng chính <span class="req">*</span></label>
+        <input id="hh_crop" placeholder="VD: Chôm chôm">
+        <div class="field-error-msg" id="hh_crop_err"></div>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field" id="hh_area_field">
+        <label>Diện tích canh tác (ha) <span class="req">*</span></label>
+        <input id="hh_area" type="number" step="0.01" min="0" placeholder="VD: 1.2">
+        <div class="field-error-msg" id="hh_area_err"></div>
+      </div>
+      <div class="field" id="hh_years_field">
+        <label>Số năm canh tác</label>
+        <input id="hh_years" type="number" step="1" min="0" placeholder="VD: 15">
+        <div class="field-error-msg" id="hh_years_err"></div>
+      </div>
+    </div>
+    <div class="field" id="hh_phone_field">
+      <label>Điện thoại liên hệ</label>
+      <input id="hh_phone" placeholder="VD: 0912 345 678">
+      <div class="field-error-msg" id="hh_phone_err"></div>
+    </div>
+    <div class="field"><label>Ghi chú</label><input id="hh_note" placeholder="VD: Trồng xen mương vườn cây ăn trái, hệ thống tưới tự động"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeHhForm()">Hủy</button>
+      <button class="btn btn-primary" id="hh_saveBtn" onclick="saveHhForm()"><span class="btn-text">Lưu hộ trồng</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: thêm/sửa kiểm định chất lượng -->
+<div class="overlay" id="qualityOverlay" role="dialog" aria-modal="true" aria-labelledby="qualityFormTitle">
+  <div class="modal">
+    <button class="modal-close" onclick="closeQualityForm()" aria-label="Đóng">×</button>
+    <h3 id="qualityFormTitle">Thêm lần kiểm định</h3>
+    <input type="hidden" id="q_editId">
+    <div class="field" id="q_season_field">
+      <label>Mùa vụ / lô hàng <span class="req">*</span></label>
+      <select id="q_season"></select>
+      <div class="field-error-msg" id="q_season_err"></div>
+    </div>
+    <div class="field" id="q_metric_field">
+      <label>Chỉ tiêu kiểm nghiệm <span class="req">*</span></label>
+      <input id="q_metric" list="metricList" placeholder="VD: Nitrat (NO3-)">
+      <datalist id="metricList">
+        <option value="Nitrat (NO3-)"></option>
+        <option value="Dư lượng thuốc bảo vệ thực vật"></option>
+        <option value="Chì (Pb)"></option>
+        <option value="Cadimi (Cd)"></option>
+        <option value="Asen (As)"></option>
+        <option value="Thủy ngân (Hg)"></option>
+        <option value="E. coli"></option>
+        <option value="Salmonella"></option>
+      </datalist>
+      <div class="field-error-msg" id="q_metric_err"></div>
+    </div>
+    <div class="field-row">
+      <div class="field" id="q_value_field">
+        <label>Giá trị đo được <span class="req">*</span></label>
+        <input id="q_value" type="number" step="0.001" min="0" placeholder="VD: 320">
+        <div class="field-error-msg" id="q_value_err"></div>
+      </div>
+      <div class="field"><label>Đơn vị</label><input id="q_unit" placeholder="VD: mg/kg, CFU/g..."></div>
+    </div>
+    <div class="field">
+      <label>Tiêu chuẩn áp dụng</label>
+      <select id="q_standard">
+        <option value="VietGAP / Nội địa">VietGAP / Nội địa</option>
+        <option value="Siêu thị trong nước">Siêu thị trong nước</option>
+        <option value="Xuất khẩu (GlobalGAP/MRL quốc tế)">Xuất khẩu (GlobalGAP/MRL quốc tế)</option>
+      </select>
+    </div>
+    <div class="field" id="q_threshold_field">
+      <label>Ngưỡng cho phép (theo QCVN/quy định hiện hành) <span class="req">*</span></label>
+      <input id="q_threshold" type="number" step="0.001" min="0" placeholder="VD: 500">
+      <div class="field-error-msg" id="q_threshold_err"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Ngày kiểm</label><input id="q_date" type="date"></div>
+      <div class="field"><label>Đơn vị kiểm định</label><input id="q_lab" placeholder="VD: Trung tâm KĐ 3 / Quatest 3"></div>
+    </div>
+    <div class="field">
+      <label>Kết quả kiểm định</label>
+      <select id="q_result">
+        <option value="pass">Đạt</option>
+        <option value="fail">Không đạt</option>
+        <option value="pending">Chờ kết quả</option>
+      </select>
+    </div>
+    <div class="field"><label>Ghi chú</label><input id="q_note" placeholder="VD: Lấy mẫu ngẫu nhiên tại ruộng, cách ly 14 ngày"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeQualityForm()">Hủy</button>
+      <button class="btn btn-primary" id="q_saveBtn" onclick="saveQualityForm()"><span class="btn-text">Lưu kết quả</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: thêm/sửa đầu ra -->
+<div class="overlay" id="outputOverlay" role="dialog" aria-modal="true" aria-labelledby="outputFormTitle">
+  <div class="modal">
+    <button class="modal-close" onclick="closeOutputForm()" aria-label="Đóng">×</button>
+    <h3 id="outputFormTitle">Thêm đầu ra</h3>
+    <input type="hidden" id="o_editId">
+    <div class="field" id="o_season_field">
+      <label>Mùa vụ / lô hàng <span class="req">*</span></label>
+      <select id="o_season"></select>
+      <div class="field-error-msg" id="o_season_err"></div>
+    </div>
+    <div class="field" id="o_buyer_field">
+      <label>Đối tác thu mua <span class="req">*</span></label>
+      <input id="o_buyer" placeholder="VD: Siêu thị Co.opmart / Chợ đầu mối Hóc Môn">
+      <div class="field-error-msg" id="o_buyer_err"></div>
+    </div>
+    <div class="field">
+      <label>Kênh tiêu thụ</label>
+      <select id="o_channel">
+        <option value="Chợ đầu mối">Chợ đầu mối</option>
+        <option value="Siêu thị / cửa hàng thực phẩm sạch">Siêu thị / cửa hàng thực phẩm sạch</option>
+        <option value="Thương lái">Thương lái</option>
+        <option value="Xuất khẩu">Xuất khẩu</option>
+        <option value="Du lịch cộng đồng / bán trực tiếp">Du lịch cộng đồng / bán trực tiếp</option>
+        <option value="Khác">Khác</option>
+      </select>
+    </div>
+    <div class="field-row">
+      <div class="field" id="o_volume_field">
+        <label>Khối lượng (tấn) <span class="req">*</span></label>
+        <input id="o_volume" type="number" step="0.01" min="0" placeholder="VD: 5">
+        <div class="field-error-msg" id="o_volume_err"></div>
+      </div>
+      <div class="field" id="o_price_field">
+        <label>Giá bán (đ/kg)</label>
+        <input id="o_price" type="number" step="1000" min="0" placeholder="VD: 28000">
+        <div class="field-error-msg" id="o_price_err"></div>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Ngày giao (dự kiến/thực tế)</label><input id="o_date" type="date"></div>
+      <div class="field">
+        <label>Trạng thái</label>
+        <select id="o_status">
+          <option value="negotiating">Đang đàm phán</option>
+          <option value="done">Đã giao hàng</option>
+          <option value="cancelled">Đã hủy</option>
+        </select>
+      </div>
+    </div>
+    <div class="field"><label>Ghi chú</label><input id="o_note" placeholder="VD: Hợp đồng bao tiêu nguyên vụ, thanh toán sau 7 ngày"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeOutputForm()">Hủy</button>
+      <button class="btn btn-primary" id="o_saveBtn" onclick="saveOutputForm()"><span class="btn-text">Lưu đầu ra</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="procDetailOverlay" role="dialog" aria-modal="true" aria-labelledby="procDetailTitle" onclick="if(event.target===this)closeProcDetail()">
+  <div class="proc-detail-modal"><button class="modal-close" onclick="closeProcDetail()" aria-label="Đóng">×</button><div id="procDetailContent"></div></div>
+</div>
+
+<!-- Modal: thêm/sửa tin thu mua (admin) -->
+<div class="overlay" id="procOverlay" role="dialog" aria-modal="true" aria-labelledby="procFormTitle">
+  <div class="modal">
+    <button class="modal-close" onclick="closeProcForm()" aria-label="Đóng">×</button>
+    <h3 id="procFormTitle">Đăng tin thu mua</h3>
+    <input type="hidden" id="p_editId">
+    <div class="field" id="p_title_field">
+      <label>Tiêu đề tin thu mua <span class="req">*</span></label>
+      <input id="p_title" placeholder="VD: Cần thu mua chôm chôm xuất khẩu thường xuyên">
+      <div class="field-error-msg" id="p_title_err"></div>
+    </div>
+    <div class="field" id="p_buyer_field">
+      <label>Đối tác / đơn vị thu mua <span class="req">*</span></label>
+      <input id="p_buyer" placeholder="VD: Cửa hàng thực phẩm sạch Bình Mỹ Xanh">
+      <div class="field-error-msg" id="p_buyer_err"></div>
+    </div>
+    <div class="field-row">
+      <div class="field" id="p_crop_field">
+        <label>Cây trồng / sản phẩm cần mua <span class="req">*</span></label>
+        <input id="p_crop" placeholder="VD: Chôm chôm">
+        <div class="field-error-msg" id="p_crop_err"></div>
+      </div>
+      <div class="field">
+        <label>Ưu tiên ấp</label>
+        <input id="p_ap" list="apList4" placeholder="VD: Ấp Bốn Phú hoặc Tất cả các ấp">
+        <datalist id="apList4"><option value="Ấp Bốn Phú"></option><option value="Ấp An Hòa"></option><option value="Tất cả các ấp"></option></datalist>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field" id="p_quantity_field">
+        <label>Số lượng cần thu mua</label>
+        <input id="p_quantity" type="number" step="0.01" min="0" placeholder="VD: 5">
+        <div class="field-error-msg" id="p_quantity_err"></div>
+      </div>
+      <div class="field"><label>Đơn vị tính</label><input id="p_unitLabel" placeholder="VD: tấn/tháng, tấn/đợt..."></div>
+    </div>
+    <div class="field"><label>Giá đề nghị (đ/kg, để 0 nếu thỏa thuận)</label><input id="p_priceOffer" type="number" step="1000" min="0" placeholder="VD: 26000"></div>
+    <div class="field"><label>Yêu cầu chất lượng / chứng nhận</label><input id="p_requirement" placeholder="VD: Ưu tiên có kiểm định VietGAP"></div>
+    <div class="field"><label>Hạn nhận hồ sơ / hạn giao hàng</label><input id="p_deadline" type="date"></div>
+    <div class="field-row">
+      <div class="field"><label>Người liên hệ</label><input id="p_contactName" placeholder="VD: Chị Hương"></div>
+      <div class="field" id="p_phone_field">
+        <label>Điện thoại liên hệ</label>
+        <input id="p_contactPhone" placeholder="VD: 0901 234 567">
+        <div class="field-error-msg" id="p_phone_err"></div>
+      </div>
+    </div>
+    <div class="field"><label>Ghi chú thêm</label><input id="p_note" placeholder="VD: Có thể ký hợp đồng bao tiêu dài hạn"></div>
+    <div class="field">
+      <label>Trạng thái</label>
+      <select id="p_status">
+        <option value="open">Đang tuyển đầu mối</option>
+        <option value="closed">Đã đủ nguồn hàng</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeProcForm()">Hủy</button>
+      <button class="btn btn-primary" id="p_saveBtn" onclick="saveProcForm()"><span class="btn-text">Lưu tin thu mua</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: thêm/sửa sản phẩm đang bán (admin & hộ trồng) -->
+<div class="overlay" id="productOverlay" role="dialog" aria-modal="true" aria-labelledby="productFormTitle">
+  <div class="modal">
+    <button class="modal-close" onclick="closeProductForm()" aria-label="Đóng">×</button>
+    <h3 id="productFormTitle">Đăng sản phẩm bán</h3>
+    <input type="hidden" id="pr_editId">
+
+    <!-- Trường ảnh sản phẩm trực quan -->
+    <div class="field" id="pr_image_field">
+      <label>Hình ảnh sản phẩm (Link URL)</label>
+      <div class="pr-image-input-wrap">
+        <input id="pr_image" type="url" placeholder="VD: https://images.unsplash.com/... hoặc dán link ảnh" oninput="previewProductFormImage(this.value)">
+      </div>
+      <div id="pr_image_preview_box" class="pr-image-preview-box" style="display:none;">
+        <img id="pr_image_preview" src="" alt="Xem trước ảnh" onerror="handleProductFormImgError()">
+        <button type="button" class="pr-img-remove-btn" onclick="clearProductFormImage()" title="Xóa ảnh" aria-label="Xóa ảnh">×</button>
+      </div>
+      <div id="pr_image_err" class="field-error-msg" style="display:none;">Không thể tải ảnh từ liên kết này. Vui lòng kiểm tra lại URL.</div>
+    </div>
+    
+    <div class="field-row">
+      <div class="field" id="pr_code_field">
+        <label>Mã sản phẩm (tự động tạo)</label>
+        <input id="pr_productCode" placeholder="VD: BM-2026-001" style="background:#F9FBF8;font-weight:600;">
+      </div>
+      <div class="field">
+        <label>Mã lô / Lô thu hoạch</label>
+        <input id="pr_batchCode" placeholder="VD: LÔ-01 hoặc BM-V1">
+      </div>
+    </div>
+
+    <div class="field" id="pr_name_field">
+      <label>Tên nông sản / trái cây <span class="req">*</span></label>
+      <input id="pr_name" list="fruitList" placeholder="VD: Chôm chôm, Sơ ri, Cà chua...">
+      <datalist id="fruitList">
+        <option value="Chôm chôm"></option><option value="Sơ ri"></option><option value="Bòn bon"></option>
+        <option value="Cà chua"></option><option value="Rau muống nước"></option><option value="Bầu bí"></option>
+      </datalist>
+      <div class="field-error-msg" id="pr_name_err"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Người bán / Hộ trồng</label><input id="pr_seller" placeholder="VD: Nguyễn Văn A"></div>
+      <div class="field">
+        <label>Ấp / Khu vực</label>
+        <input id="pr_ap" list="apList6" placeholder="VD: Ấp Bốn Phú">
+        <datalist id="apList6"><option value="Ấp Bốn Phú"></option><option value="Ấp An Hòa"></option><option value="Ấp 1"></option><option value="Ấp 2"></option></datalist>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field" id="pr_quantity_field">
+        <label>Số lượng hiện có <span class="req">*</span></label>
+        <input id="pr_quantity" type="number" step="0.1" min="0" placeholder="VD: 50">
+        <div class="field-error-msg" id="pr_quantity_err"></div>
+      </div>
+      <div class="field">
+        <label>Đơn vị tính</label>
+        <select id="pr_unitLabel">
+          <option value="kg">kg (kilôgam)</option>
+          <option value="tấn">tấn</option>
+          <option value="bó">bó</option>
+          <option value="thùng">thùng</option>
+        </select>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field" id="pr_price_field">
+        <label>Giá bán tham khảo (đồng/kg hoặc đồng/đơn vị)</label>
+        <input id="pr_price" type="number" step="1000" min="0" placeholder="VD: 25000">
+        <div class="field-error-msg" id="pr_price_err"></div>
+      </div>
+      <div class="field">
+        <label>Ngày thu hoạch / Hái quả</label>
+        <input id="pr_harvestDate" type="date">
+      </div>
+    </div>
+    <div class="field">
+      <label>Chứng nhận chất lượng</label>
+      <select id="pr_certification">
+        <option value="Chưa kiểm định">Chưa có chứng nhận (Chưa kiểm định)</option>
+        <option value="VietGAP">Đạt chuẩn VietGAP</option>
+        <option value="Xuất khẩu (GlobalGAP)">Xuất khẩu (GlobalGAP)</option>
+      </select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Người liên hệ</label><input id="pr_contactName" placeholder="VD: Anh Bảy"></div>
+      <div class="field" id="pr_phone_field">
+        <label>Số điện thoại liên hệ</label>
+        <input id="pr_contactPhone" placeholder="VD: 0912 345 678">
+        <div class="field-error-msg" id="pr_phone_err"></div>
+      </div>
+    </div>
+    <div class="field"><label>Ghi chú thêm</label><input id="pr_note" placeholder="VD: Nông sản sạch hái trong ngày, có xe giao hàng tận nơi"></div>
+    <div class="field">
+      <label>Tình trạng bán hàng</label>
+      <select id="pr_status">
+        <option value="available">✅ Đang bán (Còn hàng)</option>
+        <option value="soldout">ℹ️ Đã bán hết (Tạm ngưng)</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeProductForm()">Hủy bỏ</button>
+      <button class="btn btn-primary" id="pr_saveBtn" onclick="saveProductForm()"><span class="btn-text">Lưu lại</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: quán/chợ gửi yêu cầu mua sản phẩm -->
+<div class="overlay" id="buyOverlay" role="dialog" aria-modal="true" aria-labelledby="buyModalTitle">
+  <div class="modal" style="max-width:420px;">
+    <button class="modal-close" onclick="closeBuyForm()" aria-label="Đóng">×</button>
+    <h3 id="buyModalTitle">Liên hệ mua hàng</h3>
+    <p class="section-hint" id="buyForTitle" style="margin:-8px 0 14px;"></p>
+    <input type="hidden" id="by_productId">
+    <div class="field" id="by_name_field">
+      <label>Tên quán / chợ / người mua <span class="req">*</span></label>
+      <input id="by_name" placeholder="VD: Quán cơm Ba Miền">
+      <div class="field-error-msg" id="by_name_err"></div>
+    </div>
+    <div class="field" id="by_phone_field">
+      <label>Điện thoại liên hệ <span class="req">*</span></label>
+      <input id="by_phone" placeholder="VD: 09xx xxx xxx">
+      <div class="field-error-msg" id="by_phone_err"></div>
+    </div>
+    <div class="field"><label>Số lượng muốn mua</label><input id="by_quantity" placeholder="VD: 10 kg"></div>
+    <div class="field"><label>Ghi chú</label><input id="by_note" placeholder="VD: Cần giao trước 6h sáng"></div>
+    <div id="buyError" class="field-error" style="margin-bottom:0;">Vui lòng nhập tên và số điện thoại liên hệ.</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeBuyForm()">Hủy bỏ</button>
+      <button class="btn btn-primary" id="by_submitBtn" onclick="submitBuyRequest()"><span class="btn-text">Gửi yêu cầu mua</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: hộ trồng gửi chào hàng / liên hệ cho tin thu mua -->
+<div class="overlay" id="applyOverlay" role="dialog" aria-modal="true" aria-labelledby="applyModalTitle">
+  <div class="modal" style="max-width:420px;">
+    <button class="modal-close" onclick="closeApplyForm()" aria-label="Đóng">×</button>
+    <h3 id="applyModalTitle">Gửi chào hàng / Liên hệ</h3>
+    <p class="section-hint" id="applyForTitle" style="margin:-8px 0 14px;"></p>
+    <input type="hidden" id="ap_procId">
+    <div class="field" id="ap_name_field">
+      <label>Tên chủ hộ / hộ kinh doanh <span class="req">*</span></label>
+      <input id="ap_name" placeholder="VD: Nguyễn Văn Bảy">
+      <div class="field-error-msg" id="ap_name_err"></div>
+    </div>
+    <div class="field-row">
+      <div class="field" id="ap_phone_field">
+        <label>Điện thoại liên hệ <span class="req">*</span></label>
+        <input id="ap_phone" placeholder="VD: 09xx xxx xxx">
+        <div class="field-error-msg" id="ap_phone_err"></div>
+      </div>
+      <div class="field"><label>Ấp</label><input id="ap_ap" list="apList5" placeholder="VD: Ấp Bốn Phú">
+        <datalist id="apList5"><option value="Ấp Bốn Phú"></option><option value="Ấp An Hòa"></option></datalist>
+      </div>
+    </div>
+    <div class="field"><label>Sản lượng có thể cung cấp</label><input id="ap_quantity" placeholder="VD: 2 tấn/tháng"></div>
+    <div class="field"><label>Ghi chú (chất lượng, chứng nhận đang có...)</label><input id="ap_note" placeholder="VD: Đã có kiểm định VietGAP"></div>
+    <div id="applyError" class="field-error" style="margin-bottom:0;">Vui lòng nhập tên và số điện thoại liên hệ.</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeApplyForm()">Hủy bỏ</button>
+      <button class="btn btn-primary" id="ap_submitBtn" onclick="submitApplication()"><span class="btn-text">Gửi thông tin</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: xác nhận thao tác xóa và hành động an toàn -->
+<div class="overlay overlay-center" id="confirmOverlay" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <div class="modal" style="max-width:440px;">
+    <button class="modal-close" onclick="closeConfirmModal()" aria-label="Đóng">×</button>
+    <h3 id="confirmTitle" style="display:flex;align-items:center;gap:8px;color:var(--danger);">
+      <svg class="icon" style="width:22px;height:22px;margin:0;"><use href="#icon-alert"/></svg>
+      <span>Xác nhận thao tác</span>
+    </h3>
+    <div class="confirm-modal-body" id="confirmMsg"></div>
+    <div class="modal-actions" style="margin-top:12px;">
+      <button class="btn" id="confirmCancelBtn" onclick="closeConfirmModal()">Hủy bỏ</button>
+      <button class="btn btn-danger" id="confirmOkBtn">Xác nhận xóa</button>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================================
+     CÁC MODAL MỚI: QUÉT QR, CHI TIẾT SẢN PHẨM, TẠO & IN QR, HƯỚNG DẪN DỄ DÙNG
+     ========================================================================= -->
+
+<!-- =========================================================================
+     CÁC MODAL: QUÉT QR, CHI TIẾT SẢN PHẨM, TẠO & IN QR, HƯỚNG DẪN DỄ DÙNG
+     ========================================================================= -->
+
+<!-- Modal: Quét mã QR sản phẩm (Desktop: Modal - Mobile: Toàn màn hình) -->
+<div class="overlay qr-scan-overlay-wrap" id="qrScanOverlay" role="dialog" aria-modal="true" aria-labelledby="qrScanTitle">
+  <div class="modal qr-scan-modal" id="qrScanModal">
+    <button class="modal-close" onclick="closeQrScanner()" aria-label="Đóng">
+      <svg class="icon" style="width:20px;height:20px;margin:0;"><use href="#icon-close"/></svg>
+    </button>
+    
+    <div class="qr-scan-head">
+      <span class="chip chip-pass" style="margin-bottom:8px;display:inline-flex;align-items:center;gap:5px;">
+        <svg class="icon" style="width:13px;height:13px;margin:0;"><use href="#icon-qr-scan"/></svg>
+        <span>TRUY XUẤT NGUỒN GỐC</span>
+      </span>
+      <h3 id="qrScanTitle" style="margin:0 0 6px;">Quét mã QR sản phẩm</h3>
+      <p class="section-hint" style="margin:0 0 12px;">Đưa mã QR trên bao bì vào giữa khung camera để xem thông tin hộ trồng, ngày hái & kiểm định.</p>
+    </div>
+
+    <!-- Hướng dẫn trực quan: Đưa mã QR vào giữa khung -->
+    <div class="qr-target-banner">
+      <svg class="icon" style="width:16px;height:16px;margin:0;"><use href="#icon-qr-scan"/></svg>
+      <span>Đưa mã QR vào giữa khung hình</span>
+    </div>
+
+    <!-- Khung camera quét trực tiếp -->
+    <div class="qr-reader-container">
+      <div id="qrReader"></div>
+      <div class="qr-laser-line" id="qrLaser"></div>
+      <div class="qr-viewfinder-corners">
+        <span class="corner tl"></span>
+        <span class="corner tr"></span>
+        <span class="corner bl"></span>
+        <span class="corner br"></span>
+      </div>
+    </div>
+
+    <!-- Thông báo lỗi hoặc trạng thái cấp quyền camera bằng tiếng Việt thân thiện -->
+    <div id="qrCameraNotice" class="qr-camera-notice" style="display:none;"></div>
+
+    <!-- Nhập mã thủ công dự phòng khi camera không quét được (Section 9) -->
+    <div class="qr-manual-box">
+      <div class="qr-manual-title">
+        <svg class="icon" style="width:14px;height:14px;margin-right:4px;"><use href="#icon-help"/></svg>
+        <span>Không quét được QR?</span>
+      </div>
+      <div class="qr-manual-input-row">
+        <input type="text" id="manualProductCode" placeholder="Nhập mã sản phẩm (VD: BM-2026-001)" autocomplete="off" onkeydown="if(event.key==='Enter') lookupManualCode()">
+        <button type="button" class="btn btn-primary btn-manual-submit" onclick="lookupManualCode()">
+          <svg class="icon"><use href="#icon-search"/></svg><span>TRA CỨU</span>
+        </button>
+      </div>
+      <div class="qr-manual-hint">Nhập mã in dưới tem QR rồi bấm Tra cứu.</div>
+    </div>
+
+    <div class="modal-actions qr-scan-foot-actions">
+      <button type="button" class="btn btn-sm btn-ghost" onclick="switchCameraFacing()">
+        <svg class="icon"><use href="#icon-refresh"/></svg><span>Đổi camera</span>
+      </button>
+      <button type="button" class="btn btn-sm" onclick="closeQrScanner()">Đóng lại</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Chi tiết sản phẩm tra cứu từ QR hoặc mã -->
+<div class="overlay" id="productDetailOverlay" role="dialog" aria-modal="true" aria-labelledby="detailModalTitle">
+  <div class="modal product-detail-modal" style="max-width:780px;">
+    <button class="modal-close" onclick="closeProductDetail()" aria-label="Đóng">
+      <svg class="icon" style="width:20px;height:20px;margin:0;"><use href="#icon-close"/></svg>
+    </button>
+    <div id="productDetailContent">
+      <!-- Nội dung chi tiết sản phẩm sẽ được render theo các trạng thái rõ ràng -->
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Lightbox phóng to ảnh sản phẩm -->
+<div class="overlay overlay-center" id="imageLightboxOverlay" onclick="closeImageLightbox(event)" role="dialog" aria-modal="true" aria-label="Xem ảnh lớn">
+  <div class="lightbox-modal">
+    <button class="lightbox-close" onclick="closeImageLightbox()" aria-label="Đóng ảnh">×</button>
+    <img id="lightboxImage" src="" alt="Ảnh phóng to" class="lightbox-img">
+  </div>
+</div>
+
+<!-- Modal: Tạo, xem, in và tải mã QR cho sản phẩm -->
+<div class="overlay" id="productQrOverlay" role="dialog" aria-modal="true" aria-labelledby="productQrTitle">
+  <div class="modal product-qr-modal" style="max-width:440px;">
+    <button class="modal-close" onclick="closeProductQrModal()" aria-label="Đóng">
+      <svg class="icon" style="width:20px;height:20px;margin:0;"><use href="#icon-close"/></svg>
+    </button>
+    <div style="text-align:center;">
+      <span class="chip chip-pass" style="margin-bottom:8px;display:inline-flex;align-items:center;gap:4px;">
+        <svg class="icon" style="width:13px;height:13px;margin:0;"><use href="#icon-qr-code"/></svg>
+        <span>TEM NÔNG SẢN BÌNH MỸ</span>
+      </span>
+      <h3 id="productQrTitle" style="padding-right:0;margin-bottom:6px;">Mã QR Sản Phẩm</h3>
+      <p class="section-hint" style="margin-bottom:16px;">In tem này dán lên bao bì nông sản để người tiêu dùng quét tra cứu nguồn gốc sạch.</p>
+      
+      <!-- Khung tem in QR -->
+      <div class="qr-card-print" id="qrPrintArea">
+        <div class="qr-stamp-header">
+          <strong>NÔNG NGHIỆP BÌNH MỸ</strong>
+          <span>Ven sông Sài Gòn · TP.HCM</span>
+        </div>
+        <div class="qr-image-wrap">
+          <div id="productQrCanvas"></div>
+        </div>
+        <div class="qr-stamp-info">
+          <h4 id="qrStampProductName">Cà chua VietGAP</h4>
+          <div class="qr-stamp-meta">
+            <div>Mã sản phẩm: <strong id="qrStampCode">BM-2026-001</strong></div>
+            <div>Hộ trồng: <span id="qrStampSeller">Nguyễn Văn A</span></div>
+            <div>Khu vực: <span id="qrStampAp">Ấp Bốn Phú</span></div>
+            <div id="qrStampCertRow">Chứng nhận: <span id="qrStampCert" class="chip chip-pass">VietGAP</span></div>
+          </div>
+        </div>
+        <div class="qr-stamp-footer">Quét bằng camera điện thoại để xem kiểm định</div>
+      </div>
+
+      <div class="modal-actions" style="justify-content:center;gap:10px;margin-top:18px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-primary" onclick="downloadProductQr()">
+          <svg class="icon"><use href="#icon-download"/></svg><span>Tải ảnh QR</span>
+        </button>
+        <button type="button" class="btn" onclick="printProductQr()">
+          <svg class="icon"><use href="#icon-printer"/></svg><span>In tem QR</span>
+        </button>
+        <button type="button" class="btn" onclick="closeProductQrModal()">Đóng lại</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Hướng dẫn sử dụng cho người ít hiểu công nghệ (Section 6, 32) -->
+<div class="overlay" id="helpModalOverlay" role="dialog" aria-modal="true" aria-labelledby="helpModalTitle">
+  <div class="modal" style="max-width:540px;">
+    <button class="modal-close" onclick="closeHelpModal()" aria-label="Đóng">
+      <svg class="icon" style="width:20px;height:20px;margin:0;"><use href="#icon-close"/></svg>
+    </button>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+      <div class="help-head-icon">
+        <svg class="icon" style="width:24px;height:24px;margin:0;color:var(--paddy);"><use href="#icon-help"/></svg>
+      </div>
+      <div>
+        <h3 id="helpModalTitle" style="margin:0;">Hướng dẫn sử dụng dễ hiểu</h3>
+        <p class="section-hint" style="margin:2px 0 0;">Dành cho bà con nông dân, tiểu thương và khách mua hàng</p>
+      </div>
+    </div>
+    
+    <div class="help-card-list">
+      <div class="help-card">
+        <div class="help-q">
+          <svg class="icon" style="width:16px;height:16px;"><use href="#icon-qr-scan"/></svg>
+          <span>1. Muốn kiểm tra nguồn gốc & an toàn rau củ?</span>
+        </div>
+        <p class="help-a">Bấm nút <strong>"Quét QR"</strong> màu xanh lớn, đưa camera vào mã QR dán trên sản phẩm để xem ngay tên hộ trồng, ngày hái và chứng nhận VietGAP.</p>
+        <button type="button" class="btn btn-sm btn-primary" onclick="closeHelpModal();openQrScanner();">
+          <svg class="icon"><use href="#icon-qr-scan"/></svg><span>Bấm vào đây để quét QR</span>
+        </button>
+      </div>
+
+      <div class="help-card">
+        <div class="help-q">
+          <svg class="icon" style="width:16px;height:16px;"><use href="#icon-search"/></svg>
+          <span>2. Không quét được mã QR?</span>
+        </div>
+        <p class="help-a">Bấm nút <strong>"Tra cứu bằng mã sản phẩm"</strong>, sau đó gõ mã số (ví dụ: BM-2026-001) được in dưới mã QR để xem thông tin ngay.</p>
+        <button type="button" class="btn btn-sm" onclick="closeHelpModal();openManualLookup();">
+          <svg class="icon"><use href="#icon-search"/></svg><span>Nhập mã sản phẩm thủ công</span>
+        </button>
+      </div>
+
+      <div class="help-card">
+        <div class="help-q">
+          <svg class="icon" style="width:16px;height:16px;"><use href="#icon-products"/></svg>
+          <span>3. Muốn tìm rau củ quanh ấp mình ở?</span>
+        </div>
+        <p class="help-a">Tại mục <strong>"Sản phẩm"</strong>, gõ tên nông sản (ví dụ: chôm chôm, sơ ri) hoặc bấm chọn Ấp Bốn Phú, Ấp An Hòa trong danh sách.</p>
+        <button type="button" class="btn btn-sm" onclick="closeHelpModal();switchToDauRaProducts();">
+          <svg class="icon"><use href="#icon-products"/></svg><span>Xem danh sách rau củ</span>
+        </button>
+      </div>
+
+      <div class="help-card">
+        <div class="help-q">
+          <svg class="icon" style="width:16px;height:16px;"><use href="#icon-plus"/></svg>
+          <span>4. Bà con muốn đăng bán nông sản nhà mình?</span>
+        </div>
+        <p class="help-a">Bấm nút <strong>"+ Đăng sản phẩm bán"</strong>, nhập tên trái cây/rau, số lượng hiện có, giá bán và số điện thoại để thương lái, quán ăn gọi mua trực tiếp.</p>
+        <button type="button" class="btn btn-sm btn-primary" onclick="closeHelpModal();handleOpenProductForm();">
+          <svg class="icon"><use href="#icon-plus"/></svg><span>+ Đăng sản phẩm bán</span>
+        </button>
+      </div>
+
+      <div class="help-card">
+        <div class="help-q">
+          <svg class="icon" style="width:16px;height:16px;"><use href="#icon-ai"/></svg>
+          <span>5. Cần hỏi kỹ thuật bón phân, phòng sâu bệnh?</span>
+        </div>
+        <p class="help-a">Bấm vào mục <strong>"Trợ lý AI"</strong> và chọn câu hỏi có sẵn hoặc gõ câu hỏi để được hướng dẫn nông nghiệp miễn phí.</p>
+        <button type="button" class="btn btn-sm" onclick="closeHelpModal();switchToAI();">
+          <svg class="icon"><use href="#icon-ai"/></svg><span>Mở Trợ lý AI</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="modal-actions" style="margin-top:18px;">
+      <button type="button" class="btn btn-primary" onclick="closeHelpModal()" style="width:100%;">Tôi đã hiểu</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Bottom Sheet: Menu "Thêm" trên Mobile (Section 5, 22) -->
+<div class="overlay overlay-bottom-sheet" id="moreMenuOverlay" role="dialog" aria-modal="true" aria-labelledby="moreMenuTitle">
+  <div class="modal more-sheet-modal">
+    <div class="more-sheet-handle"></div>
+    <div class="more-sheet-head">
+      <h3 id="moreMenuTitle">Menu tiện ích</h3>
+      <button class="modal-close" onclick="closeMobileMoreSheet()" aria-label="Đóng">
+        <svg class="icon" style="width:20px;height:20px;margin:0;"><use href="#icon-close"/></svg>
+      </button>
+    </div>
+    <div class="more-sheet-links">
+      <button type="button" class="more-link-item" onclick="closeMobileMoreSheet();switchToDauRaDemand();">
+        <div class="more-link-icon icon-bg-yellow"><svg class="icon"><use href="#icon-procurement"/></svg></div>
+        <div class="more-link-text">
+          <strong>Tin thu mua nông sản</strong>
+          <span>Nhu cầu của quán ăn, chợ, thương lái</span>
+        </div>
+        <svg class="icon icon-chevron"><use href="#icon-chevron-right"/></svg>
+      </button>
+      <button type="button" class="more-link-item" id="mLinkAdmin" onclick="closeMobileMoreSheet();switchToAdmin();" style="display:none;">
+        <div class="more-link-icon icon-bg-blue"><svg class="icon"><use href="#icon-admin"/></svg></div>
+        <div class="more-link-text">
+          <strong>Quản lý cán bộ nông nghiệp</strong>
+          <span>Mùa vụ, hộ trồng, quy hoạch xã</span>
+        </div>
+        <svg class="icon icon-chevron"><use href="#icon-chevron-right"/></svg>
+      </button>
+      <button type="button" class="more-link-item" onclick="closeMobileMoreSheet();openHelpModal();">
+        <div class="more-link-icon icon-bg-green"><svg class="icon"><use href="#icon-help"/></svg></div>
+        <div class="more-link-text">
+          <strong>Hướng dẫn sử dụng cho bà con</strong>
+          <span>Cách quét QR, tra cứu nguồn gốc</span>
+        </div>
+        <svg class="icon icon-chevron"><use href="#icon-chevron-right"/></svg>
+      </button>
+      <button type="button" class="more-link-item" id="mLinkLogin" onclick="closeMobileMoreSheet();openPersonAuth('login');">
+        <div class="more-link-icon icon-bg-purple"><svg class="icon"><use href="#icon-user"/></svg></div>
+        <div class="more-link-text">
+          <strong>Đăng nhập / Đăng ký</strong>
+          <span>Dành cho hộ trồng, quán ăn, cán bộ</span>
+        </div>
+        <svg class="icon icon-chevron"><use href="#icon-chevron-right"/></svg>
+      </button>
+      <button type="button" class="more-link-item text-danger" id="mLinkLogout" onclick="closeMobileMoreSheet();logout();" style="display:none;">
+        <div class="more-link-icon" style="background:#FDECEC;color:var(--danger);"><svg class="icon"><use href="#icon-logout"/></svg></div>
+        <div class="more-link-text">
+          <strong>Đăng xuất tài khoản</strong>
+          <span id="mLoggedUser"></span>
+        </div>
+        <svg class="icon icon-chevron"><use href="#icon-chevron-right"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- THANH ĐIỀU HƯỚNG DƯỚI ĐÁY DÀNH CHO MOBILE APP (Section 5, 22, 41.12) -->
+<nav class="mobile-bottom-nav" id="mobileBottomNav" aria-label="Thanh điều hướng ứng dụng">
+  <button type="button" class="m-nav-item active" data-mnav="trang-chu" onclick="switchMobileNav('trang-chu')">
+    <svg class="m-nav-icon"><use href="#icon-home"/></svg>
+    <span class="m-nav-label">Trang chủ</span>
+  </button>
+  <button type="button" class="m-nav-item" data-mnav="tin-thu-mua" onclick="switchMobileNav('tin-thu-mua')">
+    <svg class="m-nav-icon"><use href="#icon-products"/></svg>
+    <span class="m-nav-label">Sản phẩm</span>
+  </button>
+  <button type="button" class="m-nav-item m-nav-qr-highlight" onclick="openQrScanner()" title="Quét mã QR sản phẩm" aria-label="Quét mã QR">
+    <div class="m-qr-circle">
+      <svg class="m-nav-icon m-qr-icon"><use href="#icon-qr-scan"/></svg>
+    </div>
+    <span class="m-nav-label">Quét QR</span>
+  </button>
+  <button type="button" class="m-nav-item" data-mnav="kiem-dinh" onclick="switchMobileNav('kiem-dinh')">
+    <svg class="m-nav-icon"><use href="#icon-quality"/></svg>
+    <span class="m-nav-label">Kiểm định</span>
+  </button>
+  <button type="button" class="m-nav-item" data-mnav="tro-ly-ai" onclick="switchMobileNav('tro-ly-ai')">
+    <svg class="m-nav-icon"><use href="#icon-ai"/></svg>
+    <span class="m-nav-label">Hỏi AI</span>
+  </button>
+  <button type="button" class="m-nav-item" onclick="openMobileMoreSheet()" aria-label="Mở menu thêm">
+    <svg class="m-nav-icon"><use href="#icon-menu"/></svg>
+    <span class="m-nav-label">Thêm</span>
+  </button>
+</nav>
+
+<div class="toast" id="toast"></div>
+<div class="toast-stack" id="toastStack"></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
+
+ 
+ 
