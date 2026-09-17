@@ -11,7 +11,7 @@ import {
   signOut, updatePassword, sendPasswordResetEmail
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, collection
+  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import {
   getFunctions, httpsCallable
@@ -54,7 +54,6 @@ let qualityTests = [];
 let outputs = [];
 let procurements = [];
 let products = [];
-let personUsers = [];
 let currentPersonUser = null; // { username, role: 'grower'|'buyer', displayName, phone, ap }
 let admins = [];
 let currentUser = null; // { user, role: 'super'|'ward', ap }
@@ -76,6 +75,29 @@ let chatHistory = [];
 let firstLoadDone = false;
 let authReady = false;
 const initialHash = (location.hash || '').slice(1);
+
+const EXTERNAL_SCRIPTS = {
+  chart: { src: 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js', global: 'Chart' },
+  scanner: { src: 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js', global: 'Html5Qrcode' },
+  qrcode: { src: 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js', global: 'QRCode' }
+};
+const externalScriptLoads = new Map();
+function loadExternalScript(name){
+  const config = EXTERNAL_SCRIPTS[name];
+  if(!config) return Promise.reject(new Error('Thư viện không hợp lệ: ' + name));
+  if(window[config.global]) return Promise.resolve();
+  if(externalScriptLoads.has(name)) return externalScriptLoads.get(name);
+  const load = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = config.src;
+    script.async = true;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('Không tải được ' + name));
+    document.head.append(script);
+  });
+  externalScriptLoads.set(name, load);
+  return load;
+}
 
 /* ============ Tiện ích hiển thị & tính toán ============ */
 function seasonRevenue(s){
@@ -296,7 +318,9 @@ async function createAuthUserWithoutSignIn(email, password){
 }
 
 /* ============ Lưu trữ dùng chung — Firestore, có đồng bộ thời gian thực ============ */
-const APPDATA_KEYS = ['seasons','households','qualityTests','outputs','procurements','products','activity'];
+const PUBLIC_APPDATA_KEYS = ['seasons','households','qualityTests','outputs','procurements','products'];
+const ADMIN_APPDATA_KEYS = ['activity'];
+let stopAdminRealtime = [];
 const DEFAULT_APPDATA = {
   seasons: SAMPLE_SEASONS,
   households: SAMPLE_HOUSEHOLDS,
@@ -362,7 +386,7 @@ function applyAppDataValue(key, value){
 }
 
 async function loadData(){
-  for(const key of APPDATA_KEYS){
+  for(const key of PUBLIC_APPDATA_KEYS){
     try{
       const snap = await getDoc(doc(db, 'appData', key));
       const value = snap.exists() ? snap.data().value : (DEFAULT_APPDATA[key] || []);
@@ -371,18 +395,10 @@ async function loadData(){
       applyAppDataValue(key, []);
     }
   }
-  try{
-    const snap = await getDocs(collection(db, 'admins'));
-    admins = snap.docs.map(d => ({ uid: d.id, ...d.data() }));
-  }catch(e){ admins = []; }
-  try{
-    const snap = await getDocs(collection(db, 'personUsers'));
-    personUsers = snap.docs.map(d => ({ uid: d.id, ...d.data() }));
-  }catch(e){ personUsers = []; }
 }
 
 function setupRealtime(){
-  APPDATA_KEYS.forEach(key => {
+  PUBLIC_APPDATA_KEYS.forEach(key => {
     onSnapshot(doc(db, 'appData', key), (snap) => {
       applyAppDataValue(key, snap.exists() ? snap.data().value : []);
       renderAll();
@@ -394,23 +410,21 @@ function setupRealtime(){
     });
   });
 
-  onSnapshot(collection(db, 'admins'), (snap) => {
+}
+
+function setupAdminRealtime(){
+  if(!isAdmin || stopAdminRealtime.length) return;
+  ADMIN_APPDATA_KEYS.forEach(key => stopAdminRealtime.push(onSnapshot(doc(db, 'appData', key), snap => {
+    applyAppDataValue(key, snap.exists() ? snap.data().value : []);
+    renderAll();
+  }, err => console.error('Lỗi đồng bộ ' + key, err))));
+  if(!isSuperAdmin) return;
+  stopAdminRealtime.push(onSnapshot(collection(db, 'admins'), snap => {
     admins = snap.docs.map(d => ({ uid: d.id, ...d.data() }));
-    if(currentUser){
-      const me = admins.find(a => a.uid === currentUser.uid);
-      if(me) currentUser = me;
-    }
+    if(currentUser){ const me = admins.find(a => a.uid === currentUser.uid); if(me) currentUser = me; }
     renderAll();
     if(document.getElementById('accountsOverlay')?.classList.contains('show')) renderAccountsTable();
-  }, (err) => console.error('Lỗi đồng bộ admins', err));
-
-  onSnapshot(collection(db, 'personUsers'), (snap) => {
-    personUsers = snap.docs.map(d => ({ uid: d.id, ...d.data() }));
-    if(currentPersonUser){
-      const me = personUsers.find(u => u.uid === currentPersonUser.uid);
-      if(me) currentPersonUser = me;
-    }
-  }, (err) => console.error('Lỗi đồng bộ personUsers', err));
+  }, err => console.error('Lỗi đồng bộ admins', err)));
 }
 
 async function saveAppData(key, value){
@@ -450,10 +464,14 @@ async function logActivity(text){
 /* ============ Phục hồi phiên làm việc ============ */
 onAuthStateChanged(auth, async (user) => {
   if(!user){
+    stopAdminRealtime.forEach(stop => stop());
+    stopAdminRealtime = [];
     currentUser = null;
     isAdmin = false;
     isSuperAdmin = false;
     currentPersonUser = null;
+    admins = [];
+    activity = [];
     authReady = true;
     renderAll();
     return;
@@ -477,6 +495,7 @@ onAuthStateChanged(auth, async (user) => {
     authReady = true;
     restoreAdminDeepLinkIfNeeded();
   }
+  setupAdminRealtime();
   renderAll();
 });
 
@@ -3503,8 +3522,8 @@ async function doPersonRegister(){
     err.style.display = 'block';
     return;
   }
-  if(password.length < 6){
-    err.textContent = 'Mật khẩu phải có ít nhất 6 ký tự.';
+  if(password.length < 8){
+    err.textContent = 'Mật khẩu phải có ít nhất 8 ký tự.';
     err.style.display = 'block';
     return;
   }
@@ -3588,8 +3607,8 @@ async function savePwForm(){
   const p2 = document.getElementById('pw_pass2').value;
   const errEl = document.getElementById('pwError');
 
-  if(!p1 || p1.length < 6){
-    errEl.textContent = 'Mật khẩu mới phải có tối thiểu 6 ký tự.';
+  if(!p1 || p1.length < 8){
+    errEl.textContent = 'Mật khẩu mới phải có tối thiểu 8 ký tự.';
     errEl.style.display = 'block';
     return;
   }
@@ -4015,6 +4034,11 @@ async function saveAccountForm(){
 
   if(!isEmail(user) || (!editUid && !pass) || (role === 'ward' && !ap)){
     err.textContent = !isEmail(user) ? 'Vui lòng nhập định dạng email hợp lệ cho tài khoản.' : 'Vui lòng nhập đầy đủ thông tin.';
+    err.style.display = 'block';
+    return;
+  }
+  if(!editUid && pass.length < 8){
+    err.textContent = 'Mật khẩu phải có ít nhất 8 ký tự.';
     err.style.display = 'block';
     return;
   }

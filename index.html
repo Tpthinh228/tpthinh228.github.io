@@ -3,11 +3,44 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Nông Nghiệp Xã Bình Mỹ</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<title>Bình Mỹ — Nông nghiệp kết nối</title>
+<meta name="description" content="Nền tảng kết nối nông hộ, sản phẩm và nhu cầu thu mua tại xã Bình Mỹ.">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://nongnghiepbinhmy.web.app/">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="vi_VN">
+<meta property="og:title" content="Bình Mỹ — Nông nghiệp kết nối">
+<meta property="og:description" content="Nền tảng kết nối nông hộ, sản phẩm và nhu cầu thu mua tại xã Bình Mỹ.">
+<meta property="og:image" content="images/logo.png">
+<meta property="og:url" content="https://nongnghiepbinhmy.web.app/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Bình Mỹ — Nông nghiệp kết nối">
+<meta name="twitter:description" content="Nền tảng kết nối nông hộ, sản phẩm và nhu cầu thu mua tại xã Bình Mỹ.">
+<meta name="twitter:image" content="images/logo.png">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' https://cdnjs.cloudflare.com https://unpkg.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self';">
+<meta http-equiv="X-Content-Type-Options" content="nosniff">
+<meta http-equiv="X-Frame-Options" content="DENY">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+<link rel="preconnect" href="https://unpkg.com" crossorigin>
+<link rel="icon" type="image/png" href="images/logo.png">
 <link rel="stylesheet" href="css/style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "Bình Mỹ — Nông nghiệp kết nối",
+  "description": "Nền tảng kết nối nông hộ, sản phẩm và nhu cầu thu mua tại xã Bình Mỹ.",
+  "url": "https://nongnghiepbinhmy.web.app/",
+  "potentialAction": {
+    "@type": "SearchAction",
+    "target": "https://nongnghiepbinhmy.web.app/#tim-kiem={search_term_string}",
+    "query-input": "required name=search_term_string"
+  }
+}
+</script>
 </head>
 <body>
 
@@ -247,7 +280,7 @@
 <header class="topbar">
   <div class="wrap topbar-inner">
     <a class="brand" href="#trang-chu" aria-label="Về trang chủ Bình Mỹ">
-      <img class="brand-logo" src="images/logo.png" alt="" width="1024" height="1024">
+      <img class="brand-logo" src="images/logo.png" alt="Logo Bình Mỹ" width="1024" height="1024" loading="eager" decoding="async">
       <div class="brand-text">
         <strong class="brand-name">Bình Mỹ</strong>
         <span>Ven sông Sài Gòn · TP.HCM</span>
@@ -295,6 +328,7 @@
     </button>
   </div>
 
+  <main id="main-content">
   <!-- SECTION: TRANG CHỦ DÀNH RIÊNG CHO MOBILE APP (Section 5, 6, 21) -->
   <section id="trang-chu" class="mobile-home-section">
     <div class="mobile-home-container">
@@ -308,7 +342,7 @@
       </div>
 
       <!-- Nút Quét QR lớn, cực kỳ dễ nhận diện (Section 6, 7, 8) -->
-      <div class="mobile-qr-hero-card" onclick="openQrScanner()">
+      <div class="mobile-qr-hero-card" onclick="openQrScanner()" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' ')openQrScanner()" aria-label="Quét mã QR sản phẩm">
         <div class="mobile-qr-hero-left">
           <div class="mobile-qr-icon-wrap">
             <svg class="icon-hero-qr"><use href="#icon-qr-scan"/></svg>
@@ -325,21 +359,21 @@
 
       <!-- 3 Chỉ số quan trọng nhất cho Mobile (Section 21) -->
       <div class="mobile-stats-row">
-        <div class="mobile-stat-pill" onclick="switchToDauRaProducts()">
+        <div class="mobile-stat-pill" onclick="switchToDauRaProducts()" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' ')switchToDauRaProducts()">
           <div class="stat-pill-icon"><svg class="icon"><use href="#icon-products"/></svg></div>
           <div class="stat-pill-content">
             <strong id="mStatProducts">0</strong>
             <span>Sản phẩm</span>
           </div>
         </div>
-        <div class="mobile-stat-pill" onclick="switchToQuality()">
+        <div class="mobile-stat-pill" onclick="switchToQuality()" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' ')switchToQuality()">
           <div class="stat-pill-icon"><svg class="icon"><use href="#icon-quality"/></svg></div>
           <div class="stat-pill-content">
             <strong id="mStatTested">0</strong>
             <span>Đã kiểm định</span>
           </div>
         </div>
-        <div class="mobile-stat-pill" onclick="switchToDauRaProducts()">
+        <div class="mobile-stat-pill" onclick="switchToDauRaProducts()" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' ')switchToDauRaProducts()">
           <div class="stat-pill-icon"><svg class="icon"><use href="#icon-check-circle"/></svg></div>
           <div class="stat-pill-content">
             <strong id="mStatAvailable">0</strong>
@@ -862,6 +896,13 @@
     </div>
   </section>
 
+  </main>
+
+  <footer class="site-footer" role="contentinfo">
+    <div class="wrap">
+      <p>&copy; 2026 Nông nghiệp xã Bình Mỹ, Củ Chi, TP.HCM. Nền tảng kết nối nông sản sạch.</p>
+    </div>
+  </footer>
 </div>
 
 <!-- Modal: thêm/sửa mùa vụ -->

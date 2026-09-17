@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /website-fix-roadmap/
+Disallow: /*.zip$
+
+Sitemap: https://nongnghiepbinhmy.web.app/sitemap.xml

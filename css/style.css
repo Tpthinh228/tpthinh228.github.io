@@ -35,6 +35,12 @@ body{
   -webkit-font-smoothing:antialiased;
   overflow-x:hidden;max-width:100vw;
 }
+/* ---------- Footer ---------- */
+.site-footer{
+  text-align:center;padding:20px 0;margin-top:20px;
+  border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-faint);
+}
+
 /* Chống tràn chữ: các đoạn có thể chứa từ/chuỗi dài không khoảng trắng
    (email, tên sản phẩm, ghi chú tự do...) được phép ngắt dòng thay vì đẩy tràn khung. */
 .proc-title,.proc-buyer,.proc-note,.proc-req,.applicant-item,.section-hint,
@@ -124,6 +130,8 @@ section.active-view{display:block;}
 .btn-danger:hover{background:var(--danger);color:#fff;}
 .btn-sm{padding:6px 12px;font-size:12.5px;border-radius:7px;}
 .btn:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{
+  outline:2px solid var(--river);outline-offset:2px;}
+.mobile-stat-pill:focus-visible,.mobile-qr-hero-card:focus-visible,.mobile-action-card:focus-visible{
   outline:2px solid var(--river);outline-offset:2px;}
 
 /* ---------- Hero ---------- */
