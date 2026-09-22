@@ -14,3 +14,10 @@ desktop.ini
 website-fix-roadmap/
 website-fix-roadmap-source-only.zip
 BAO-CAO-FIX-WEBSITE.md
+
+# Deps / Firebase
+node_modules/
+functions/node_modules/
+.firebase/
+firebase-debug.log
+*.local

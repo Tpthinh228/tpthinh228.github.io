@@ -1,4691 +1,576 @@
-// ============================================================================
-// HỆ THỐNG QUẢN LÝ NÔNG NGHIỆP & ĐẦU RA NÔNG SẢN XÃ BÌNH MỸ, TP. HỒ CHÍ MINH
-// Bản nâng cấp toàn diện: Logic nghiệp vụ, Xác thực phân quyền, Kiểm định chất lượng,
-// Khả năng chịu lỗi ngoại tuyến, Trợ lý AI phân tích dữ liệu cục bộ & giao diện đáp ứng.
-// ============================================================================
-
-import { initializeApp, deleteApp }
-  from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-import {
-  getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  signOut, updatePassword, sendPasswordResetEmail
-} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
-import {
-  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection
-} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-import {
-  getFunctions, httpsCallable
-} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-functions.js";
-import { IMPORTABLE_KEYS, buildTestDataImportValue, prepareTestDataImport } from './import-data.js';
-
-/* ============ Cấu hình Firebase ============ */
-const firebaseConfig = {
-  apiKey: "AIzaSyDuqly5ejTvMgr3a6OKNvcwGPd3jk7nlZk",
-  authDomain: "binhmy-nongnghiep.firebaseapp.com",
-  projectId: "binhmy-nongnghiep",
-  storageBucket: "binhmy-nongnghiep.firebasestorage.app",
-  messagingSenderId: "356707994338",
-  appId: "1:356707994338:web:df236f5580c0ea2731ecbb"
-};
-
-const firebaseApp = initializeApp(firebaseConfig);
-const auth = getAuth(firebaseApp);
-const db = getFirestore(firebaseApp);
-const functions = getFunctions(firebaseApp, 'asia-southeast1');
-
-/* ============ Trạng thái ứng dụng ============ */
-const SAMPLE_SEASONS = [];
-const SAMPLE_HOUSEHOLDS = [];
-const SAMPLE_QUALITY = [];
-const SAMPLE_OUTPUTS = [];
-const SAMPLE_PROCUREMENTS = [];
-
-const AI_SUGGESTIONS = [
-  'Sản phẩm nào đã kiểm định đạt chuẩn an toàn & VietGAP?',
-  'Cách quét mã QR để kiểm tra nguồn gốc rau củ Bình Mỹ?',
-  'Mặt hàng nào đang bán nhiều nhất tại xã Bình Mỹ?',
-  'Chỉ tiêu kiểm định nào đang cần lưu ý trước khi xuất hàng?',
-  'Đầu ra nào đang cần thu mua chôm chôm & rau an toàn?'
-];
-
-let seasons = [];
-let households = [];
-let qualityTests = [];
-let outputs = [];
-let procurements = [];
-let products = [];
-let currentPersonUser = null; // { username, role: 'grower'|'buyer', displayName, phone, ap }
-let admins = [];
-let currentUser = null; // { user, role: 'super'|'ward', ap }
-let activity = [];
-let isAdmin = false;
-let isSuperAdmin = false;
-let chart = null;
-let wardChart = null;
-
-// Sắp xếp bảng mùa vụ
-let sortKey = null;
-let sortDir = 1;
-
-// Sắp xếp bảng hộ trồng
-let hhSortKey = null;
-let hhSortDir = 1;
-
-let chatHistory = [];
-let firstLoadDone = false;
-let authReady = false;
-const initialHash = (location.hash || '').slice(1);
-
-const EXTERNAL_SCRIPTS = {
-  chart: { src: 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js', global: 'Chart' },
-  scanner: { src: 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js', global: 'Html5Qrcode' },
-  qrcode: { src: 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js', global: 'QRCode' }
-};
-const externalScriptLoads = new Map();
-function loadExternalScript(name){
-  const config = EXTERNAL_SCRIPTS[name];
-  if(!config) return Promise.reject(new Error('Thư viện không hợp lệ: ' + name));
-  if(window[config.global]) return Promise.resolve();
-  if(externalScriptLoads.has(name)) return externalScriptLoads.get(name);
-  const load = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = config.src;
-    script.async = true;
-    script.onload = resolve;
-    script.onerror = () => reject(new Error('Không tải được ' + name));
-    document.head.append(script);
-  });
-  externalScriptLoads.set(name, load);
-  return load;
-}
-
-/* ============ Tiện ích hiển thị & tính toán ============ */
-function seasonRevenue(s){
-  return Number(s.yieldTon || 0) * 1000 * Number(s.price || 0);
-}
-
-function seasonYieldPerHa(s){
-  const area = Number(s.area || 0);
-  const yieldTon = Number(s.yieldTon || 0);
-  return area > 0 ? (yieldTon / area) : 0;
-}
-
-function csvEscape(v){
-  const str = String(v == null ? '' : v);
-  if(/[",\n]/.test(str)) return '"' + str.replace(/"/g, '""') + '"';
-  return str;
-}
-
-function esc(v){
-  return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[c]));
-}
-
-function emptyRow(colspan, text){
-  return `<tr><td colspan="${colspan}" class="empty"><svg class="icon"><use href="#icon-sprout"/></svg>${text}</td></tr>`;
-}
-
-function money(n){
-  return Number(n || 0).toLocaleString('vi-VN');
-}
-
-function debounce(fn, wait){
-  let t;
-  return (...a) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...a), wait);
-  };
-}
-
-function relTime(ts){
-  const diff = Math.max(0, Date.now() - ts);
-  const m = Math.floor(diff / 60000);
-  if(m < 1) return 'vừa xong';
-  if(m < 60) return `${m} phút trước`;
-  const h = Math.floor(m / 60);
-  if(h < 24) return `${h} giờ trước`;
-  const d = Math.floor(h / 24);
-  return `${d} ngày trước`;
-}
-
-let toastTimer;
-function toast(msg, type = 'ok'){
-  const el = document.getElementById('toast');
-  if(!el) return;
-  el.textContent = msg;
-  el.className = `toast toast-${type} show`;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    el.classList.remove('show');
-  }, 3200);
-}
-
-function animateCount(el, to, isMoney){
-  if(!el) return;
-  const from = Number(el.dataset.val || 0);
-  el.dataset.val = to;
-  if(from === to){
-    el.textContent = isMoney ? (to / 1000000).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) + 'tr' : Math.round(to).toLocaleString('vi-VN');
-    return;
-  }
-  const dur = 400;
-  const start = performance.now();
-  function step(now){
-    const p = Math.min(1, (now - start) / dur);
-    const eased = 1 - Math.pow(1 - p, 3);
-    const val = from + (to - from) * eased;
-    el.textContent = isMoney ? (val / 1000000).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) + 'tr' : Math.round(val).toLocaleString('vi-VN');
-    if(p < 1) requestAnimationFrame(step);
-  }
-  requestAnimationFrame(step);
-}
-
-/* ============ Hỗ trợ xác thực biểu mẫu & trạng thái nút ============ */
-function setFieldError(fieldId, errorId, message){
-  const field = document.getElementById(fieldId);
-  const err = document.getElementById(errorId);
-  if(field) field.classList.add('has-error');
-  if(err){
-    err.textContent = message;
-    err.style.display = 'block';
-  }
-}
-
-function clearFieldErrors(containerId){
-  const container = document.getElementById(containerId);
-  if(!container) return;
-  container.querySelectorAll('.has-error').forEach(el => el.classList.remove('has-error'));
-  container.querySelectorAll('.field-error-msg').forEach(el => {
-    el.textContent = '';
-    el.style.display = 'none';
-  });
-}
-
-function setBtnLoading(btnId, isLoading, defaultText = 'Lưu'){
-  const btn = document.getElementById(btnId);
-  if(!btn) return;
-  if(isLoading){
-    btn.disabled = true;
-    btn.dataset.prevHtml = btn.innerHTML;
-    btn.innerHTML = `<span class="typing-dots" style="vertical-align:middle;margin-right:6px;"><span></span><span></span><span></span></span>Đang lưu...`;
-    btn.classList.add('is-loading');
-  }else{
-    btn.disabled = false;
-    btn.innerHTML = btn.dataset.prevHtml || defaultText;
-    btn.classList.remove('is-loading');
-  }
-}
-
-/* ============ Hộp thoại xác nhận tùy chỉnh (thay thế window.confirm) ============ */
-function showConfirmDialog(title, message, confirmText = 'Xác nhận xóa', isDanger = true){
-  return new Promise((resolve) => {
-    const overlay = document.getElementById('confirmOverlay');
-    const titleEl = document.getElementById('confirmTitle');
-    const msgEl = document.getElementById('confirmMsg');
-    const okBtn = document.getElementById('confirmOkBtn');
-    const cancelBtn = document.getElementById('confirmCancelBtn');
-
-    if(!overlay || !titleEl || !msgEl || !okBtn || !cancelBtn){
-      resolve(window.confirm(message));
-      return;
-    }
-
-    titleEl.textContent = title;
-    msgEl.innerHTML = esc(message).replace(/\n/g, '<br>');
-    okBtn.textContent = confirmText;
-    okBtn.className = isDanger ? 'btn btn-danger' : 'btn btn-primary';
-
-    const cleanup = () => {
-      overlay.classList.remove('show');
-      okBtn.removeEventListener('click', onOk);
-      cancelBtn.removeEventListener('click', onCancel);
-      overlay.removeEventListener('click', onOverlay);
-      document.removeEventListener('keydown', onEsc);
-    };
-
-    const onOk = () => { cleanup(); resolve(true); };
-    const onCancel = () => { cleanup(); resolve(false); };
-    const onOverlay = (e) => { if(e.target === overlay){ cleanup(); resolve(false); } };
-    const onEsc = (e) => { if(e.key === 'Escape'){ cleanup(); resolve(false); } };
-
-    okBtn.addEventListener('click', onOk);
-    cancelBtn.addEventListener('click', onCancel);
-    overlay.addEventListener('click', onOverlay);
-    document.addEventListener('keydown', onEsc);
-
-    overlay.classList.add('show');
-    cancelBtn.focus();
-  });
-}
-
-function closeConfirmModal(){
-  const overlay = document.getElementById('confirmOverlay');
-  if(overlay) overlay.classList.remove('show');
-}
-
-/* ============ Quản lý trạng thái đồng bộ mạng ============ */
-let syncHideTimer = null;
-function setSyncStatus(state){
-  const pill = document.getElementById('syncPill');
-  const text = document.getElementById('syncText');
-  if(!pill || !text) return;
-  clearTimeout(syncHideTimer);
-
-  pill.classList.remove('syncing', 'sync-offline', 'sync-error');
-  if(state === 'syncing'){
-    pill.classList.add('syncing');
-    text.textContent = 'Đang đồng bộ...';
-  }else if(state === 'offline'){
-    pill.classList.add('sync-offline');
-    text.textContent = 'Ngoại tuyến (Bộ nhớ tạm)';
-  }else if(state === 'error'){
-    pill.classList.add('sync-error');
-    text.textContent = 'Lỗi kết nối máy chủ';
-  }else{
-    syncHideTimer = setTimeout(() => {
-      text.textContent = 'Đã đồng bộ';
-    }, 400);
-  }
-}
-
-window.addEventListener('online', () => {
-  setSyncStatus('synced');
-  toast('Đã khôi phục kết nối mạng', 'ok');
-});
-
-window.addEventListener('offline', () => {
-  setSyncStatus('offline');
-  toast('Mất kết nối mạng - Đang hoạt động ở chế độ ngoại tuyến', 'warn');
-});
-
-/* ============ Email & Auth Helper ============ */
-function adminEmail(username){ return String(username || '').trim().toLowerCase(); }
-function personEmail(username){ return String(username || '').trim().toLowerCase(); }
-function isEmail(v){ return typeof v === 'string' && /\S+@\S+\.\S+/.test(v); }
-
-async function createAuthUserWithoutSignIn(email, password){
-  const secondaryApp = initializeApp(firebaseConfig, 'secondary-' + Date.now());
-  const secondaryAuth = getAuth(secondaryApp);
-  try{
-    const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
-    const uid = cred.user.uid;
-    await signOut(secondaryAuth);
-    return uid;
-  }finally{
-    await deleteApp(secondaryApp);
-  }
-}
-
-/* ============ Lưu trữ dùng chung — Firestore, có đồng bộ thời gian thực ============ */
-const PUBLIC_APPDATA_KEYS = ['seasons','households','qualityTests','outputs','procurements','products'];
-const ADMIN_APPDATA_KEYS = ['activity'];
-let stopAdminRealtime = [];
-const DEFAULT_APPDATA = {
-  seasons: SAMPLE_SEASONS,
-  households: SAMPLE_HOUSEHOLDS,
-  qualityTests: SAMPLE_QUALITY,
-  outputs: SAMPLE_OUTPUTS,
-  procurements: SAMPLE_PROCUREMENTS,
-  products: [],
-  activity: []
-};
-
-function removeVietnameseTones(str){
-  str = String(str || '').toLowerCase();
-  str = str.replace(/à|á|ạ|ả|ã|â|ầ|ấ|ậ|ẩ|ẫ|ă|ằ|ắ|ặ|ẳ|ẵ/g, "a");
-  str = str.replace(/è|é|ẹ|ẻ|ẽ|ê|ề|ế|ệ|ể|ễ/g, "e");
-  str = str.replace(/ì|í|ị|ỉ|ĩ/g, "i");
-  str = str.replace(/ò|ó|ọ|ỏ|õ|ô|ồ|ố|ộ|ổ|ỗ|ơ|ờ|ớ|ợ|ở|ỡ/g, "o");
-  str = str.replace(/ù|ú|ụ|ủ|ũ|ư|ừ|ứ|ự|ử|ữ/g, "u");
-  str = str.replace(/ỳ|ý|ỵ|ỷ|ỹ/g, "y");
-  str = str.replace(/đ/g, "d");
-  str = str.replace(/\u0300|\u0301|\u0303|\u0309|\u0323/g, "");
-  str = str.replace(/\u02C6|\u0306|\u031B/g, "");
-  return str.trim();
-}
-
-function normalizeProduct(p, idx){
-  if(!p || typeof p !== 'object') return p;
-  const id = Number(p.id || (idx + 1));
-  const productCode = p.productCode || ('BM-2026-' + String(id).padStart(3, '0'));
-  const batchCode = p.batchCode || ('LÔ-' + String(id).padStart(2, '0'));
-  const harvestDate = p.harvestDate || p.postedDate || new Date().toISOString().slice(0, 10);
-  const qrCode = p.qrCode || `${window.location.origin}${window.location.pathname}#san-pham=${encodeURIComponent(productCode)}`;
-  return {
-    ...p,
-    id,
-    productCode,
-    batchCode,
-    harvestDate,
-    qrCode,
-    name: p.name || 'Nông sản Bình Mỹ',
-    sellerName: p.sellerName || p.ownerName || 'Hộ trồng Bình Mỹ',
-    ap: p.ap || p.area || 'Xã Bình Mỹ',
-    status: p.status || 'available',
-    certification: p.certification || 'Chưa kiểm định',
-    unitLabel: p.unitLabel || 'kg',
-    quantity: Number(p.quantity || 0),
-    price: Number(p.price || 0),
-    buyRequests: Array.isArray(p.buyRequests) ? p.buyRequests : []
-  };
-}
-
-function applyAppDataValue(key, value){
-  switch(key){
-    case 'seasons': seasons = value || []; break;
-    case 'households': households = value || []; break;
-    case 'qualityTests': qualityTests = value || []; break;
-    case 'outputs': outputs = value || []; break;
-    case 'procurements': procurements = value || []; break;
-    case 'products':
-      products = (value || []).map((p, idx) => normalizeProduct(p, idx));
-      break;
-    case 'activity': activity = value || []; break;
-  }
-}
-
-async function loadData(){
-  for(const key of PUBLIC_APPDATA_KEYS){
-    try{
-      const snap = await getDoc(doc(db, 'appData', key));
-      const value = snap.exists() ? snap.data().value : (DEFAULT_APPDATA[key] || []);
-      applyAppDataValue(key, value);
-    }catch(e){
-      applyAppDataValue(key, []);
-    }
-  }
-}
-
-function setupRealtime(){
-  PUBLIC_APPDATA_KEYS.forEach(key => {
-    onSnapshot(doc(db, 'appData', key), (snap) => {
-      applyAppDataValue(key, snap.exists() ? snap.data().value : []);
-      renderAll();
-      if(firstLoadDone && key !== 'activity') toast('Dữ liệu vừa được cập nhật', 'ok');
-      firstLoadDone = true;
-    }, (err) => {
-      console.error('Lỗi đồng bộ ' + key, err);
-      setSyncStatus('error');
-    });
-  });
-
-}
-
-function setupAdminRealtime(){
-  if(!isAdmin || stopAdminRealtime.length) return;
-  ADMIN_APPDATA_KEYS.forEach(key => stopAdminRealtime.push(onSnapshot(doc(db, 'appData', key), snap => {
-    applyAppDataValue(key, snap.exists() ? snap.data().value : []);
-    renderAll();
-  }, err => console.error('Lỗi đồng bộ ' + key, err))));
-  if(!isSuperAdmin) return;
-  stopAdminRealtime.push(onSnapshot(collection(db, 'admins'), snap => {
-    admins = snap.docs.map(d => ({ uid: d.id, ...d.data() }));
-    if(currentUser){ const me = admins.find(a => a.uid === currentUser.uid); if(me) currentUser = me; }
-    renderAll();
-    if(document.getElementById('accountsOverlay')?.classList.contains('show')) renderAccountsTable();
-  }, err => console.error('Lỗi đồng bộ admins', err)));
-}
-
-async function saveAppData(key, value){
-  if(!navigator.onLine){
-    setSyncStatus('offline');
-    toast('Đang ngoại tuyến, dữ liệu tạm thời chưa đẩy lên đám mây', 'warn');
-  }else{
-    setSyncStatus('syncing');
-  }
-  try{
-    await setDoc(doc(db, 'appData', key), { value });
-    setSyncStatus('synced');
-    return { ok: true };
-  }catch(e){
-    console.error('Lỗi lưu ' + key, e);
-    setSyncStatus('error');
-    toast('Lỗi đồng bộ dữ liệu, vui lòng kiểm tra kết nối mạng', 'warn');
-    return { ok: false, error: e.message || 'Không thể ghi dữ liệu lên Firestore.' };
-  }
-}
-
-async function saveSeasons(){ await saveAppData('seasons', seasons); }
-async function saveHouseholds(){ await saveAppData('households', households); }
-async function saveActivity(){ await saveAppData('activity', activity); }
-async function saveQualityTests(){ await saveAppData('qualityTests', qualityTests); }
-async function saveOutputs(){ await saveAppData('outputs', outputs); }
-async function saveProcurements(){ await saveAppData('procurements', procurements); }
-async function saveProducts(){ await saveAppData('products', products); }
-
-async function logActivity(text){
-  activity.unshift({ ts: Date.now(), text });
-  activity = activity.slice(0, 30);
-  renderActivity();
-  return await saveActivity();
-}
-
-/* ============ Phục hồi phiên làm việc ============ */
-onAuthStateChanged(auth, async (user) => {
-  if(!user){
-    stopAdminRealtime.forEach(stop => stop());
-    stopAdminRealtime = [];
-    currentUser = null;
-    isAdmin = false;
-    isSuperAdmin = false;
-    currentPersonUser = null;
-    admins = [];
-    activity = [];
-    authReady = true;
-    renderAll();
-    return;
-  }
-  try{
-    const adminSnap = await getDoc(doc(db, 'admins', user.uid));
-    if(adminSnap.exists()){
-      currentUser = { uid: user.uid, ...adminSnap.data() };
-      isAdmin = true;
-      isSuperAdmin = currentUser.role === 'super';
-    }else{
-      const personSnap = await getDoc(doc(db, 'personUsers', user.uid));
-      if(personSnap.exists()){
-        currentPersonUser = { uid: user.uid, ...personSnap.data() };
-      }
-    }
-  }catch(e){
-    console.error('Lỗi khôi phục phiên đăng nhập', e);
-  }
-  if(!authReady){
-    authReady = true;
-    restoreAdminDeepLinkIfNeeded();
-  }
-  setupAdminRealtime();
-  renderAll();
-});
-
-/* ============ Đồng hồ trực tiếp ============ */
-function tickClock(){
-  const now = new Date();
-  const el = document.getElementById('clock');
-  if(el){
-    el.textContent = now.toLocaleTimeString('vi-VN') + ' · ' + now.toLocaleDateString('vi-VN');
-  }
-}
-
-/* ============ Phân quyền người dùng ============ */
-function canManage(ap){
-  if(!currentUser) return false;
-  if(currentUser.role === 'super') return true;
-  return currentUser.role === 'ward' && currentUser.ap === ap;
-}
-
-function canManageProc(p){
-  if(!p) return false;
-  if(canManage(p.ap)) return true;
-  return !!(currentPersonUser && currentPersonUser.role === 'buyer' && p.ownerUsername === currentPersonUser.username);
-}
-
-function canManageProduct(p){
-  if(!p) return false;
-  if(canManage(p.ap)) return true;
-  return !!(currentPersonUser && currentPersonUser.role === 'grower' && p.ownerUsername === currentPersonUser.username);
-}
-
-function actorLabel(){
-  if(currentUser) return currentUser.user;
-  if(currentPersonUser) return currentPersonUser.displayName + ' (' + personRoleLabel(currentPersonUser.role) + ')';
-  return 'Ẩn danh';
-}
-
-function seasonRegion(id){
-  const s = seasons.find(x => x.id === Number(id));
-  return s ? s.region : null;
-}
-
-function roleLabel(role){
-  return role === 'super' ? 'Quản trị viên xã' : 'Cán bộ ấp';
-}
-
-function personRoleLabel(role){
-  return role === 'grower' ? 'Hộ trồng' : 'Quán ăn / Chợ';
-}
-
-function initials(name){
-  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-  if(parts.length === 0) return '?';
-  if(parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-function toggleAuthMenu(e){
-  e && e.stopPropagation();
-  const wrap = document.getElementById('authMenuWrap');
-  if(!wrap) return;
-  const isOpen = wrap.classList.toggle('open');
-  wrap.querySelector('.auth-avatar-btn')?.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-}
-
-function closeAuthMenu(){
-  const wrap = document.getElementById('authMenuWrap');
-  if(!wrap) return;
-  wrap.classList.remove('open');
-  wrap.querySelector('.auth-avatar-btn')?.setAttribute('aria-expanded', 'false');
-}
-
-function closeAuthMenuThen(fn){
-  closeAuthMenu();
-  if(typeof fn === 'function') fn();
-}
-
-document.addEventListener('click', (e) => {
-  const wrap = document.getElementById('authMenuWrap');
-  if(wrap && wrap.classList.contains('open') && !wrap.contains(e.target)) closeAuthMenu();
-});
-
-document.addEventListener('keydown', (e) => {
-  if(e.key === 'Escape'){
-    closeAuthMenu();
-    closeImageLightbox();
-    closeProductDetail();
-    closeProductQrModal();
-    // Đóng bất kỳ modal đang mở
-    document.querySelectorAll('.modal-overlay.show, .overlay.show').forEach(m => m.classList.remove('show'));
-  }
-});
-
-function renderAuthArea(){
-  const el = document.getElementById('authArea');
-  if(!el) return;
-  if(currentUser){
-    const label = currentUser.user;
-    const accent = isSuperAdmin ? 'var(--bloom)' : 'var(--river)';
-    const roleTxt = roleLabel(currentUser.role) + (currentUser.ap ? ' · ' + currentUser.ap : '');
-    el.innerHTML = `
+import{initializeApp as xe,deleteApp as fn}from"https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";import{getAuth as Se,onAuthStateChanged as bn,signInWithEmailAndPassword as In,createUserWithEmailAndPassword as Te,signOut as ee,updatePassword as En,sendPasswordResetEmail as Bn}from"https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";import{getFirestore as wn,doc as D,getDoc as Et,setDoc as ne,updateDoc as kn,deleteDoc as Cn,onSnapshot as Wt,collection as $n}from"https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";import{getFunctions as _n,httpsCallable as ae}from"https://www.gstatic.com/firebasejs/10.13.0/firebase-functions.js";var gt=["seasons","households","qualityTests","outputs","procurements","products","activity"];function ve(t,e,n){return n==="replace"?e:t.concat(e)}function fe(t,e){if(!t||Array.isArray(t)||typeof t!="object")throw new Error("File ph\u1EA3i ch\u1EE9a m\u1ED9t object d\u1EEF li\u1EC7u.");let n={},a=[],i={};return gt.forEach(o=>{let c=t[o];if(i[o]=Array.isArray(c)?c.length:0,c!==void 0){if(!Array.isArray(c)){a.push({key:o,reason:"D\u1EEF li\u1EC7u ph\u1EA3i l\xE0 m\u1ED9t m\u1EA3ng."});return}n[o]=o==="products"?c.map((s,u)=>e(s,u)):c}}),{data:n,counts:i,invalid:a,unsupported:Object.keys(t).filter(o=>!gt.includes(o))}}var qe={apiKey:"AIzaSyDuqly5ejTvMgr3a6OKNvcwGPd3jk7nlZk",authDomain:"binhmy-nongnghiep.firebaseapp.com",projectId:"binhmy-nongnghiep",storageBucket:"binhmy-nongnghiep.firebasestorage.app",messagingSenderId:"356707994338",appId:"1:356707994338:web:df236f5580c0ea2731ecbb"},oe=xe(qe),it=Se(oe),P=wn(oe),ie=_n(oe,"asia-southeast1"),Ln=[],xn=[],Sn=[],Tn=[],qn=[],Pn=["S\u1EA3n ph\u1EA9m n\xE0o \u0111\xE3 ki\u1EC3m \u0111\u1ECBnh \u0111\u1EA1t chu\u1EA9n an to\xE0n & VietGAP?","C\xE1ch qu\xE9t m\xE3 QR \u0111\u1EC3 ki\u1EC3m tra ngu\u1ED3n g\u1ED1c rau c\u1EE7 B\xECnh M\u1EF9?","M\u1EB7t h\xE0ng n\xE0o \u0111ang b\xE1n nhi\u1EC1u nh\u1EA5t t\u1EA1i x\xE3 B\xECnh M\u1EF9?","Ch\u1EC9 ti\xEAu ki\u1EC3m \u0111\u1ECBnh n\xE0o \u0111ang c\u1EA7n l\u01B0u \xFD tr\u01B0\u1EDBc khi xu\u1EA5t h\xE0ng?","\u0110\u1EA7u ra n\xE0o \u0111ang c\u1EA7n thu mua ch\xF4m ch\xF4m & rau an to\xE0n?"],y=[],k=[],I=[],C=[],E=[],v=[],p=null,G=[],h=null,j=[],S=!1,A=!1,Xt=null,Kt=null,R=null,st=1,rt=null,lt=1,Q=[],be=!1,zt=!1,An=(location.hash||"").slice(1);function W(t){return Number(t.yieldTon||0)*1e3*Number(t.price||0)}function Y(t){let e=Number(t.area||0),n=Number(t.yieldTon||0);return e>0?n/e:0}function Mn(t){let e=String(t??"");return/[",\n]/.test(e)?'"'+e.replace(/"/g,'""')+'"':e}function r(t){return String(t??"").replace(/[&<>"']/g,e=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[e])}function escAttr(t){return String(t??"").replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}function ht(t,e){return`<tr><td colspan="${t}" class="empty"><svg class="icon"><use href="#icon-sprout"/></svg>${e}</td></tr>`}function _(t){return Number(t||0).toLocaleString("vi-VN")}function z(t,e){let n;return(...a)=>{clearTimeout(n),n=setTimeout(()=>t(...a),e)}}function Nn(t){let e=Math.max(0,Date.now()-t),n=Math.floor(e/6e4);if(n<1)return"v\u1EEBa xong";if(n<60)return`${n} ph\xFAt tr\u01B0\u1EDBc`;let a=Math.floor(n/60);return a<24?`${a} gi\u1EDD tr\u01B0\u1EDBc`:`${Math.floor(a/24)} ng\xE0y tr\u01B0\u1EDBc`}var Ie;function m(t,e="ok"){let n=document.getElementById("toast");n&&(n.textContent=t,n.className=`toast toast-${e} show`,clearTimeout(Ie),Ie=setTimeout(()=>{n.classList.remove("show")},3200))}function xt(t,e,n){if(!t)return;let a=Number(t.dataset.val||0);if(t.dataset.val=e,a===e){t.textContent=n?(e/1e6).toLocaleString("vi-VN",{maximumFractionDigits:1})+"tr":Math.round(e).toLocaleString("vi-VN");return}let i=400,o=performance.now();function c(s){let u=Math.min(1,(s-o)/i),d=1-Math.pow(1-u,3),l=a+(e-a)*d;t.textContent=n?(l/1e6).toLocaleString("vi-VN",{maximumFractionDigits:1})+"tr":Math.round(l).toLocaleString("vi-VN"),u<1&&requestAnimationFrame(c)}requestAnimationFrame(c)}function b(t,e,n){let a=document.getElementById(t),i=document.getElementById(e);a&&a.classList.add("has-error"),i&&(i.textContent=n,i.style.display="block")}function w(t){let e=document.getElementById(t);e&&(e.querySelectorAll(".has-error").forEach(n=>n.classList.remove("has-error")),e.querySelectorAll(".field-error-msg").forEach(n=>{n.textContent="",n.style.display="none"}))}function $(t,e,n="L\u01B0u"){let a=document.getElementById(t);a&&(e?(a.disabled=!0,a.dataset.prevHtml=a.innerHTML,a.innerHTML='<span class="typing-dots" style="vertical-align:middle;margin-right:6px;"><span></span><span></span><span></span></span>\u0110ang l\u01B0u...',a.classList.add("is-loading")):(a.disabled=!1,a.innerHTML=a.dataset.prevHtml||n,a.classList.remove("is-loading")))}function J(t,e,n="X\xE1c nh\u1EADn x\xF3a",a=!0){return new Promise(i=>{let o=document.getElementById("confirmOverlay"),c=document.getElementById("confirmTitle"),s=document.getElementById("confirmMsg"),u=document.getElementById("confirmOkBtn"),d=document.getElementById("confirmCancelBtn");if(!o||!c||!s||!u||!d){i(window.confirm(e));return}c.textContent=t,s.innerHTML=r(e).replace(/\n/g,"<br>"),u.textContent=n,u.className=a?"btn btn-danger":"btn btn-primary";let l=()=>{o.classList.remove("show"),u.removeEventListener("click",g),d.removeEventListener("click",f),o.removeEventListener("click",V),document.removeEventListener("keydown",et)},g=()=>{l(),i(!0)},f=()=>{l(),i(!1)},V=N=>{N.target===o&&(l(),i(!1))},et=N=>{N.key==="Escape"&&(l(),i(!1))};u.addEventListener("click",g),d.addEventListener("click",f),o.addEventListener("click",V),document.addEventListener("keydown",et),o.classList.add("show"),d.focus()})}function Ee(){let t=document.getElementById("confirmOverlay");t&&t.classList.remove("show")}var Be=null;function ot(t){let e=document.getElementById("syncPill"),n=document.getElementById("syncText");!e||!n||(clearTimeout(Be),e.classList.remove("syncing","sync-offline","sync-error"),t==="syncing"?(e.classList.add("syncing"),n.textContent="\u0110ang \u0111\u1ED3ng b\u1ED9..."):t==="offline"?(e.classList.add("sync-offline"),n.textContent="Ngo\u1EA1i tuy\u1EBFn (B\u1ED9 nh\u1EDB t\u1EA1m)"):t==="error"?(e.classList.add("sync-error"),n.textContent="L\u1ED7i k\u1EBFt n\u1ED1i m\xE1y ch\u1EE7"):Be=setTimeout(()=>{n.textContent="\u0110\xE3 \u0111\u1ED3ng b\u1ED9"},400))}window.addEventListener("online",()=>{ot("synced"),m("\u0110\xE3 kh\xF4i ph\u1EE5c k\u1EBFt n\u1ED1i m\u1EA1ng","ok")});window.addEventListener("offline",()=>{ot("offline"),m("M\u1EA5t k\u1EBFt n\u1ED1i m\u1EA1ng - \u0110ang ho\u1EA1t \u0111\u1ED9ng \u1EDF ch\u1EBF \u0111\u1ED9 ngo\u1EA1i tuy\u1EBFn","warn")});function Hn(t){return String(t||"").trim().toLowerCase()}function ce(t){return String(t||"").trim().toLowerCase()}function mt(t){return typeof t=="string"&&/\S+@\S+\.\S+/.test(t)}async function Dn(t,e){let n=xe(qe,"secondary-"+Date.now()),a=Se(n);try{let o=(await Te(a,t,e)).user.uid;return await ee(a),o}finally{await fn(n)}}var Pe=["seasons","households","qualityTests","outputs","procurements","products"],On=["activity"],ft=[],Fn={seasons:Ln,households:xn,qualityTests:Sn,outputs:Tn,procurements:qn,products:[],activity:[]};function x(t){return t=String(t||"").toLowerCase(),t=t.replace(/à|á|ạ|ả|ã|â|ầ|ấ|ậ|ẩ|ẫ|ă|ằ|ắ|ặ|ẳ|ẵ/g,"a"),t=t.replace(/è|é|ẹ|ẻ|ẽ|ê|ề|ế|ệ|ể|ễ/g,"e"),t=t.replace(/ì|í|ị|ỉ|ĩ/g,"i"),t=t.replace(/ò|ó|ọ|ỏ|õ|ô|ồ|ố|ộ|ổ|ỗ|ơ|ờ|ớ|ợ|ở|ỡ/g,"o"),t=t.replace(/ù|ú|ụ|ủ|ũ|ư|ừ|ứ|ự|ử|ữ/g,"u"),t=t.replace(/ỳ|ý|ỵ|ỷ|ỹ/g,"y"),t=t.replace(/đ/g,"d"),t=t.replace(/\u0300|\u0301|\u0303|\u0309|\u0323/g,""),t=t.replace(/\u02C6|\u0306|\u031B/g,""),t.trim()}function Ae(t,e){if(!t||typeof t!="object")return t;let n=Number(t.id||e+1),a=t.productCode||"BM-2026-"+String(n).padStart(3,"0"),i=t.batchCode||"L\xD4-"+String(n).padStart(2,"0"),o=t.harvestDate||t.postedDate||new Date().toISOString().slice(0,10),c=t.qrCode||`${window.location.origin}${window.location.pathname}#san-pham=${encodeURIComponent(a)}`;return{...t,id:n,productCode:a,batchCode:i,harvestDate:o,qrCode:c,name:t.name||"N\xF4ng s\u1EA3n B\xECnh M\u1EF9",sellerName:t.sellerName||t.ownerName||"H\u1ED9 tr\u1ED3ng B\xECnh M\u1EF9",ap:t.ap||t.area||"X\xE3 B\xECnh M\u1EF9",status:t.status||"available",certification:t.certification||"Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh",unitLabel:t.unitLabel||"kg",quantity:Number(t.quantity||0),price:Number(t.price||0),buyRequests:Array.isArray(t.buyRequests)?t.buyRequests:[]}}function Bt(t,e){switch(t){case"seasons":y=e||[];break;case"households":k=e||[];break;case"qualityTests":I=e||[];break;case"outputs":C=e||[];break;case"procurements":E=e||[];break;case"products":v=(e||[]).map((n,a)=>Ae(n,a));break;case"activity":j=e||[];break}}async function Vn(){for(let t of Pe)try{let e=await Et(D(P,"appData",t)),n=e.exists()?e.data().value:Fn[t]||[];Bt(t,n)}catch{Bt(t,[])}}function Rn(){Pe.forEach(t=>{Wt(D(P,"appData",t),e=>{Bt(t,e.exists()?e.data().value:[]),B(),be&&t!=="activity"&&m("D\u1EEF li\u1EC7u v\u1EEBa \u0111\u01B0\u1EE3c c\u1EADp nh\u1EADt","ok"),be=!0},e=>{console.error("L\u1ED7i \u0111\u1ED3ng b\u1ED9 "+t,e),ot("error")})})}function Qn(){!S||ft.length||(On.forEach(t=>ft.push(Wt(D(P,"appData",t),e=>{Bt(t,e.exists()?e.data().value:[]),B()},e=>console.error("L\u1ED7i \u0111\u1ED3ng b\u1ED9 "+t,e)))),A&&ft.push(Wt($n(P,"admins"),t=>{if(G=t.docs.map(e=>({uid:e.id,...e.data()})),h){let e=G.find(n=>n.uid===h.uid);e&&(h=e)}B(),document.getElementById("accountsOverlay")?.classList.contains("show")&&jt()},t=>console.error("L\u1ED7i \u0111\u1ED3ng b\u1ED9 admins",t))))}async function Z(t,e){navigator.onLine?ot("syncing"):(ot("offline"),m("\u0110ang ngo\u1EA1i tuy\u1EBFn, d\u1EEF li\u1EC7u t\u1EA1m th\u1EDDi ch\u01B0a \u0111\u1EA9y l\xEAn \u0111\xE1m m\xE2y","warn"));try{return await ne(D(P,"appData",t),{value:e}),ot("synced"),{ok:!0}}catch(n){return console.error("L\u1ED7i l\u01B0u "+t,n),ot("error"),m("L\u1ED7i \u0111\u1ED3ng b\u1ED9 d\u1EEF li\u1EC7u, vui l\xF2ng ki\u1EC3m tra k\u1EBFt n\u1ED1i m\u1EA1ng","warn"),{ok:!1,error:n.message||"Kh\xF4ng th\u1EC3 ghi d\u1EEF li\u1EC7u l\xEAn Firestore."}}}async function se(){await Z("seasons",y)}async function Me(){await Z("households",k)}async function Un(){await Z("activity",j)}async function re(){await Z("qualityTests",I)}async function le(){await Z("outputs",C)}async function Vt(){await Z("procurements",E)}async function Rt(){await Z("products",v)}async function T(t){return j.unshift({ts:Date.now(),text:t}),j=j.slice(0,30),He(),await Un()}bn(it,async t=>{if(!t){ft.forEach(e=>e()),ft=[],h=null,S=!1,A=!1,p=null,G=[],j=[],zt=!0,B();return}try{let e=await Et(D(P,"admins",t.uid));if(e.exists())h={uid:t.uid,...e.data()},S=!0,A=h.role==="super";else{let n=await Et(D(P,"personUsers",t.uid));n.exists()&&(p={uid:t.uid,...n.data()})}}catch(e){console.error("L\u1ED7i kh\xF4i ph\u1EE5c phi\xEAn \u0111\u0103ng nh\u1EADp",e)}zt||(zt=!0,Qo()),Qn(),B()});function we(){let t=new Date,e=document.getElementById("clock");e&&(e.textContent=t.toLocaleTimeString("vi-VN")+" \xB7 "+t.toLocaleDateString("vi-VN"))}function L(t){return h?h.role==="super"?!0:h.role==="ward"&&h.ap===t:!1}function Ct(t){return t?L(t.ap)?!0:!!(p&&p.role==="buyer"&&t.ownerUsername===p.username):!1}function Qt(t){return t?L(t.ap)?!0:!!(p&&p.role==="grower"&&t.ownerUsername===p.username):!1}function pt(){return h?h.user:p?p.displayName+" ("+At(p.role)+")":"\u1EA8n danh"}function tt(t){let e=y.find(n=>n.id===Number(t));return e?e.region:null}function $t(t){return t==="super"?"Qu\u1EA3n tr\u1ECB vi\xEAn x\xE3":"C\xE1n b\u1ED9 \u1EA5p"}function At(t){return t==="grower"?"H\u1ED9 tr\u1ED3ng":"Qu\xE1n \u0103n / Ch\u1EE3"}function ke(t){let e=String(t||"").trim().split(/\s+/).filter(Boolean);return e.length===0?"?":e.length===1?e[0].slice(0,2).toUpperCase():(e[0][0]+e[e.length-1][0]).toUpperCase()}function jn(t){t&&t.stopPropagation();let e=document.getElementById("authMenuWrap");if(!e)return;let n=e.classList.toggle("open");e.querySelector(".auth-avatar-btn")?.setAttribute("aria-expanded",n?"true":"false")}function ue(){let t=document.getElementById("authMenuWrap");t&&(t.classList.remove("open"),t.querySelector(".auth-avatar-btn")?.setAttribute("aria-expanded","false"))}function Gn(t){ue(),typeof t=="function"&&t()}document.addEventListener("click",t=>{let e=document.getElementById("authMenuWrap");e&&e.classList.contains("open")&&!e.contains(t.target)&&ue()});document.addEventListener("keydown",t=>{t.key==="Escape"&&(ue(),Ye(),Je(),Ze(),M(),document.querySelectorAll(".modal-overlay.show, .overlay.show").forEach(e=>e.classList.remove("show")))});function Xn(){let t=document.getElementById("authArea");if(t){if(h){let e=h.user,n=A?"var(--bloom)":"var(--river)",a=$t(h.role)+(h.ap?" \xB7 "+h.ap:"");t.innerHTML=`
       <div class="auth-menu-wrap" id="authMenuWrap">
-        <button type="button" class="auth-avatar-btn" onclick="toggleAuthMenu(event)" title="Hồ sơ cán bộ (${esc(label)})" aria-expanded="false">
-          <span class="auth-avatar" style="background:${accent}">${esc(initials(label))}</span>
+        <button type="button" class="auth-avatar-btn" onclick="toggleAuthMenu(event)" title="H\u1ED3 s\u01A1 c\xE1n b\u1ED9 (${r(e)})" aria-expanded="false">
+          <span class="auth-avatar" style="background:${n}">${r(ke(e))}</span>
         </button>
         <div class="auth-dropdown" role="menu">
           <div class="auth-user-info">
-            <div class="auth-user-name">${esc(label)}</div>
-            <div class="auth-user-role">${esc(roleTxt)}</div>
+            <div class="auth-user-name">${r(e)}</div>
+            <div class="auth-user-role">${r(a)}</div>
           </div>
           <button type="button" class="auth-dropdown-item" onclick="closeAuthMenuThen(switchToAdmin)">
-            <svg class="icon"><use href="#icon-admin"/></svg>Trang quản lý cán bộ
+            <svg class="icon"><use href="#icon-admin"/></svg>Trang qu\u1EA3n l\xFD c\xE1n b\u1ED9
           </button>
-          ${isSuperAdmin ? `<button type="button" class="auth-dropdown-item" onclick="closeAuthMenuThen(openAccountsModal)">
-            <svg class="icon"><use href="#icon-settings"/></svg>Quản lý tài khoản cán bộ
+          ${A?`<button type="button" class="auth-dropdown-item" onclick="closeAuthMenuThen(openAccountsModal)">
+            <svg class="icon"><use href="#icon-settings"/></svg>Qu\u1EA3n l\xFD t\xE0i kho\u1EA3n c\xE1n b\u1ED9
           </button>
           <button type="button" class="auth-dropdown-item" onclick="closeAuthMenuThen(openTestDataImportModal)">
-            <span style="font-size:14px;margin-right:2px;">🧪</span>Nhập dữ liệu test
-          </button>` : ''}
+            <span style="font-size:14px;margin-right:2px;">\u{1F9EA}</span>Nh\u1EADp d\u1EEF li\u1EC7u test
+          </button>`:""}
           <button type="button" class="auth-dropdown-item" onclick="closeAuthMenuThen(openPwForm)">
-            <svg class="icon"><use href="#icon-edit"/></svg>Đổi mật khẩu
+            <svg class="icon"><use href="#icon-edit"/></svg>\u0110\u1ED5i m\u1EADt kh\u1EA9u
           </button>
           <button type="button" class="auth-dropdown-item text-danger" onclick="closeAuthMenuThen(logout)">
-            <svg class="icon"><use href="#icon-logout"/></svg>Đăng xuất
+            <svg class="icon"><use href="#icon-logout"/></svg>\u0110\u0103ng xu\u1EA5t
           </button>
         </div>
-      </div>`;
-  }else if(currentPersonUser){
-    const name = currentPersonUser.displayName || currentPersonUser.username;
-    const roleTxt = personRoleLabel(currentPersonUser.role) + (currentPersonUser.ap ? ' · ' + currentPersonUser.ap : '');
-    el.innerHTML = `
+      </div>`}else if(p){let e=p.displayName||p.username,n=At(p.role)+(p.ap?" \xB7 "+p.ap:"");t.innerHTML=`
       <div class="auth-menu-wrap" id="authMenuWrap">
-        <button type="button" class="auth-avatar-btn" onclick="toggleAuthMenu(event)" title="Hồ sơ ${personRoleLabel(currentPersonUser.role)} (${esc(name)})" aria-expanded="false">
-          <span class="auth-avatar" style="background:var(--papaya)">${esc(initials(name))}</span>
+        <button type="button" class="auth-avatar-btn" onclick="toggleAuthMenu(event)" title="H\u1ED3 s\u01A1 ${At(p.role)} (${r(e)})" aria-expanded="false">
+          <span class="auth-avatar" style="background:var(--papaya)">${r(ke(e))}</span>
         </button>
         <div class="auth-dropdown" role="menu">
           <div class="auth-user-info">
-            <div class="auth-user-name">${esc(name)}</div>
-            <div class="auth-user-role">${esc(roleTxt)}</div>
+            <div class="auth-user-name">${r(e)}</div>
+            <div class="auth-user-role">${r(n)}</div>
           </div>
           <button type="button" class="auth-dropdown-item" onclick="closeAuthMenuThen(openPwForm)">
-            <svg class="icon"><use href="#icon-edit"/></svg>Đổi mật khẩu
+            <svg class="icon"><use href="#icon-edit"/></svg>\u0110\u1ED5i m\u1EADt kh\u1EA9u
           </button>
           <button type="button" class="auth-dropdown-item text-danger" onclick="closeAuthMenuThen(personLogout)">
-            <svg class="icon"><use href="#icon-logout"/></svg>Đăng xuất
+            <svg class="icon"><use href="#icon-logout"/></svg>\u0110\u0103ng xu\u1EA5t
           </button>
         </div>
-      </div>`;
-  }else{
-    el.innerHTML = `
+      </div>`}else t.innerHTML=`
       <div class="auth-anon-actions">
-        <button type="button" class="btn btn-sm btn-ghost" onclick="openPersonAuth('login')">Đăng nhập</button>
-        <button type="button" class="btn btn-sm btn-primary" onclick="openPersonAuth('register')">Đăng ký tài khoản</button>
-      </div>`;
-  }
-  updateNavAdminVisibility();
-}
-
-/* ============ Thẻ thống kê & Tổng quan ============ */
-function statCard(id, value, label, accent, isMoney, icon){
-  return `
-  <div class="stat-card" style="--accent:${accent}">
-    <svg class="icon stat-icon"><use href="#${icon}"/></svg>
-    <div class="num-face" id="${id}" data-val="0">0</div>
-    <div class="lbl">${label}</div>
-  </div>`;
-}
-
-function renderStatsGrid(){
-  const totalArea = seasons.reduce((a, s) => a + Number(s.area || 0), 0);
-  const totalYield = seasons.reduce((a, s) => a + Number(s.yieldTon || 0), 0);
-  const totalRevenue = seasons.reduce((a, s) => a + seasonRevenue(s), 0);
-  const avgYield = totalArea > 0 ? (totalYield / totalArea) : 0;
-  const grid = document.getElementById('statsGrid');
-  if(!grid) return;
-
-  if(!grid.hasChildNodes()){
-    grid.innerHTML =
-      statCard('statCount', seasons.length, 'Mùa vụ', 'var(--paddy)', false, 'icon-count') +
-      statCard('statArea', totalArea, 'Tổng diện tích (ha)', 'var(--river)', false, 'icon-area') +
-      statCard('statYield', totalYield, 'Tổng sản lượng (tấn)', 'var(--papaya)', false, 'icon-yield') +
-      statCard('statAvg', avgYield, 'Năng suất TB (tấn/ha)', 'var(--bloom)', false, 'icon-avg') +
-      statCard('statRevenue', totalRevenue, 'Giá trị ước tính', 'var(--paddy-deep)', true, 'icon-revenue');
-  }
-  animateCount(document.getElementById('statCount'), seasons.length);
-  animateCount(document.getElementById('statArea'), totalArea);
-  animateCount(document.getElementById('statYield'), totalYield);
-  const avgEl = document.getElementById('statAvg');
-  if(avgEl) avgEl.textContent = avgYield.toFixed(2);
-  animateCount(document.getElementById('statRevenue'), totalRevenue, true);
-}
-
-/* ============ Cảnh báo thông minh & Phím tắt hành động nhanh ============ */
-function renderSmartAlerts(){
-  const panel = document.getElementById('smartAlertPanel');
-  if(!panel) return;
-
-  const alerts = [];
-
-  // 1. Kiểm tra các mẫu kiểm định không đạt
-  const failingTests = qualityTests.filter(q => q.result === 'fail');
-  if(failingTests.length > 0){
-    const names = Array.from(new Set(failingTests.map(q => q.metric))).join(', ');
-    alerts.push({
-      type: 'danger',
-      title: `${failingTests.length} chỉ tiêu kiểm định chưa đạt chuẩn an toàn`,
-      desc: `Chỉ tiêu cần xử lý: <strong>${esc(names)}</strong>. Đề xuất kiểm tra nguồn nước tưới và tạm dừng thu hoạch các lô liên quan.`,
-      actionText: 'Xem bảng kiểm định',
-      actionFn: "location.hash = 'kiem-dinh'"
-    });
-  }
-
-  // 2. Kiểm tra các mùa vụ năng suất thấp bất thường
-  const lowYieldSeasons = seasons.filter(s => {
-    const y = seasonYieldPerHa(s);
-    return Number(s.area || 0) > 0 && y > 0 && y < 2.5;
-  });
-  if(lowYieldSeasons.length > 0){
-    alerts.push({
-      type: 'warning',
-      title: `${lowYieldSeasons.length} mùa vụ ghi nhận năng suất thấp (< 2.5 tấn/ha)`,
-      desc: `Bao gồm: ${lowYieldSeasons.slice(0, 2).map(s => esc(s.name)).join(', ')}. Cần cán bộ phụ trách ấp đến khảo sát thực tế và tư vấn kỹ thuật.`,
-      actionText: 'Lọc mùa vụ',
-      actionFn: "quickFilterLowYield()"
-    });
-  }
-
-  // 3. Tin thu mua sắp hết hạn
-  const expiringProc = procurements.filter(p => {
-    if(p.status !== 'open' || !p.deadline) return false;
-    const d = new Date(p.deadline + 'T00:00:00');
-    const now = new Date();
-    now.setHours(0,0,0,0);
-    const diff = Math.round((d - now) / 86400000);
-    return diff >= 0 && diff <= 3;
-  });
-  if(expiringProc.length > 0){
-    alerts.push({
-      type: 'info',
-      title: `${expiringProc.length} tin thu mua sắp đóng trong 3 ngày tới`,
-      desc: `Tin: "${esc(expiringProc[0].title)}" của ${esc(expiringProc[0].buyer)}. Hộ trồng cần gửi chào hàng gấp.`,
-      actionText: 'Xem tin thu mua',
-      actionFn: "location.hash = 'tin-thu-mua'"
-    });
-  }
-
-  if(alerts.length === 0){
-    panel.innerHTML = `
+        <button type="button" class="btn btn-sm btn-ghost" onclick="openPersonAuth('login')">\u0110\u0103ng nh\u1EADp</button>
+        <button type="button" class="btn btn-sm btn-primary" onclick="openPersonAuth('register')">\u0110\u0103ng k\xFD t\xE0i kho\u1EA3n</button>
+      </div>`;yn()}}function yt(t,e,n,a,i,o){return`
+  <div class="stat-card" style="--accent:${a}">
+    <svg class="icon stat-icon"><use href="#${o}"/></svg>
+    <div class="num-face" id="${t}" data-val="0">0</div>
+    <div class="lbl">${n}</div>
+  </div>`}function Kn(){let t=y.reduce((c,s)=>c+Number(s.area||0),0),e=y.reduce((c,s)=>c+Number(s.yieldTon||0),0),n=y.reduce((c,s)=>c+W(s),0),a=t>0?e/t:0,i=document.getElementById("statsGrid");if(!i)return;i.hasChildNodes()||(i.innerHTML=yt("statCount",y.length,"M\xF9a v\u1EE5","var(--paddy)",!1,"icon-count")+yt("statArea",t,"T\u1ED5ng di\u1EC7n t\xEDch (ha)","var(--river)",!1,"icon-area")+yt("statYield",e,"T\u1ED5ng s\u1EA3n l\u01B0\u1EE3ng (t\u1EA5n)","var(--papaya)",!1,"icon-yield")+yt("statAvg",a,"N\u0103ng su\u1EA5t TB (t\u1EA5n/ha)","var(--bloom)",!1,"icon-avg")+yt("statRevenue",n,"Gi\xE1 tr\u1ECB \u01B0\u1EDBc t\xEDnh","var(--paddy-deep)",!0,"icon-revenue")),xt(document.getElementById("statCount"),y.length),xt(document.getElementById("statArea"),t),xt(document.getElementById("statYield"),e);let o=document.getElementById("statAvg");o&&(o.textContent=a.toFixed(2)),xt(document.getElementById("statRevenue"),n,!0)}function zn(){let t=document.getElementById("smartAlertPanel");if(!t)return;let e=[],n=I.filter(o=>o.result==="fail");if(n.length>0){let o=Array.from(new Set(n.map(c=>c.metric))).join(", ");e.push({type:"danger",title:`${n.length} ch\u1EC9 ti\xEAu ki\u1EC3m \u0111\u1ECBnh ch\u01B0a \u0111\u1EA1t chu\u1EA9n an to\xE0n`,desc:`Ch\u1EC9 ti\xEAu c\u1EA7n x\u1EED l\xFD: <strong>${r(o)}</strong>. \u0110\u1EC1 xu\u1EA5t ki\u1EC3m tra ngu\u1ED3n n\u01B0\u1EDBc t\u01B0\u1EDBi v\xE0 t\u1EA1m d\u1EEBng thu ho\u1EA1ch c\xE1c l\xF4 li\xEAn quan.`,actionText:"Xem b\u1EA3ng ki\u1EC3m \u0111\u1ECBnh",actionFn:"location.hash = 'kiem-dinh'"})}let a=y.filter(o=>{let c=Y(o);return Number(o.area||0)>0&&c>0&&c<2.5});a.length>0&&e.push({type:"warning",title:`${a.length} m\xF9a v\u1EE5 ghi nh\u1EADn n\u0103ng su\u1EA5t th\u1EA5p (< 2.5 t\u1EA5n/ha)`,desc:`Bao g\u1ED3m: ${a.slice(0,2).map(o=>r(o.name)).join(", ")}. C\u1EA7n c\xE1n b\u1ED9 ph\u1EE5 tr\xE1ch \u1EA5p \u0111\u1EBFn kh\u1EA3o s\xE1t th\u1EF1c t\u1EBF v\xE0 t\u01B0 v\u1EA5n k\u1EF9 thu\u1EADt.`,actionText:"L\u1ECDc m\xF9a v\u1EE5",actionFn:"quickFilterLowYield()"});let i=E.filter(o=>{if(o.status!=="open"||!o.deadline)return!1;let c=new Date(o.deadline+"T00:00:00"),s=new Date;s.setHours(0,0,0,0);let u=Math.round((c-s)/864e5);return u>=0&&u<=3});if(i.length>0&&e.push({type:"info",title:`${i.length} tin thu mua s\u1EAFp \u0111\xF3ng trong 3 ng\xE0y t\u1EDBi`,desc:`Tin: "${r(i[0].title)}" c\u1EE7a ${r(i[0].buyer)}. H\u1ED9 tr\u1ED3ng c\u1EA7n g\u1EEDi ch\xE0o h\xE0ng g\u1EA5p.`,actionText:"Xem tin thu mua",actionFn:"location.hash = 'tin-thu-mua'"}),e.length===0){t.innerHTML=`
       <div class="smart-alert-item info">
         <svg class="smart-alert-icon"><use href="#icon-check"/></svg>
         <div class="smart-alert-content">
-          <div class="smart-alert-title">Tình hình canh tác & tiêu thụ ổn định</div>
-          <div class="smart-alert-desc">Không có chỉ tiêu kiểm định vượt ngưỡng cảnh báo. Tất cả các mùa vụ đang tiến triển theo kế hoạch.</div>
+          <div class="smart-alert-title">T\xECnh h\xECnh canh t\xE1c & ti\xEAu th\u1EE5 \u1ED5n \u0111\u1ECBnh</div>
+          <div class="smart-alert-desc">Kh\xF4ng c\xF3 ch\u1EC9 ti\xEAu ki\u1EC3m \u0111\u1ECBnh v\u01B0\u1EE3t ng\u01B0\u1EE1ng c\u1EA3nh b\xE1o. T\u1EA5t c\u1EA3 c\xE1c m\xF9a v\u1EE5 \u0111ang ti\u1EBFn tri\u1EC3n theo k\u1EBF ho\u1EA1ch.</div>
         </div>
-      </div>`;
-    return;
-  }
-
-  panel.innerHTML = alerts.map(a => `
-    <div class="smart-alert-item ${a.type}">
+      </div>`;return}t.innerHTML=e.map(o=>`
+    <div class="smart-alert-item ${o.type}">
       <svg class="smart-alert-icon"><use href="#icon-alert"/></svg>
       <div class="smart-alert-content">
-        <div class="smart-alert-title">${a.title}</div>
-        <div class="smart-alert-desc">${a.desc}</div>
+        <div class="smart-alert-title">${o.title}</div>
+        <div class="smart-alert-desc">${o.desc}</div>
       </div>
       <div class="smart-alert-action">
-        <button type="button" class="btn btn-sm btn-ghost" onclick="${a.actionFn}">${a.actionText}</button>
+        <button type="button" class="btn btn-sm btn-ghost" onclick="${o.actionFn}">${o.actionText}</button>
       </div>
-    </div>`).join('');
-}
-
-function quickFilterLowYield(){
-  const input = document.getElementById('searchSeason');
-  if(input){
-    input.value = '';
-    renderTable();
-    // Chuyển sang subtab mùa vụ nếu đang ở tab quản lý
-    const subtab = document.querySelector('button[data-subtab="ql-muavu"]');
-    if(subtab) subtab.click();
-    toast('Đang hiển thị danh sách mùa vụ', 'ok');
-  }
-}
-
-function quickAddSeason(){
-  if(!isAdmin){
-    toast('Chức năng thêm mùa vụ chỉ dành cho Cán bộ nông nghiệp', 'warn');
-    return;
-  }
-  openForm();
-}
-
-function quickAddQuality(){
-  if(!isAdmin){
-    toast('Chức năng ghi nhận kiểm định chỉ dành cho Cán bộ nông nghiệp', 'warn');
-    return;
-  }
-  openQualityForm();
-}
-
-function quickAddProc(){
-  if(!isAdmin && (!currentPersonUser || currentPersonUser.role !== 'buyer')){
-    toast('Vui lòng đăng nhập tài khoản Cán bộ hoặc Đối tác thu mua để đăng tin', 'warn');
-    openPersonAuth('login');
-    return;
-  }
-  openProcForm();
-}
-
-function quickOpenAI(){
-  location.hash = 'tro-ly-ai';
-}
-
-/* ============ Bảng quản lý mùa vụ ============ */
-function statusChip(s){
-  return s === 'plan' ? '<span class="chip chip-plan">Lên kế hoạch</span>'
-    : s === 'growing' ? '<span class="chip chip-growing">Đang canh tác</span>'
-    : '<span class="chip chip-done">Đã thu hoạch</span>';
-}
-
-function householdName(id){
-  if(!id) return '—';
-  const h = households.find(x => x.id === Number(id));
-  return h ? h.name : '—';
-}
-
-function sortedSeasons(list){
-  if(!sortKey) return list;
-  const arr = [...list];
-  arr.sort((a, b) => {
-    let av, bv;
-    if(sortKey === 'household'){
-      av = householdName(a.householdId);
-      bv = householdName(b.householdId);
-    }else if(sortKey === 'revenue'){
-      av = seasonRevenue(a);
-      bv = seasonRevenue(b);
-    }else if(sortKey === 'yieldPerHa'){
-      av = seasonYieldPerHa(a);
-      bv = seasonYieldPerHa(b);
-    }else{
-      av = a[sortKey];
-      bv = b[sortKey];
-    }
-    if(typeof av === 'string' || typeof bv === 'string'){
-      av = (av == null ? '' : String(av)).toLowerCase();
-      bv = (bv == null ? '' : String(bv)).toLowerCase();
-      return av.localeCompare(bv) * sortDir;
-    }
-    return ((av || 0) - (bv || 0)) * sortDir;
-  });
-  return arr;
-}
-
-function currentFilteredSeasons(){
-  const filterStatus = document.getElementById('filterStatus')?.value || 'all';
-  const filterCrop = document.getElementById('filterSeasonCrop')?.value || 'all';
-  const filterAp = document.getElementById('filterSeasonAp')?.value || 'all';
-  const q = (document.getElementById('searchSeason')?.value || '').trim().toLowerCase();
-
-  // Cập nhật bộ lọc động cho cây trồng
-  const cropSelect = document.getElementById('filterSeasonCrop');
-  if(cropSelect && cropSelect.options.length <= 1){
-    const uniqueCrops = Array.from(new Set(seasons.map(s => s.crop).filter(Boolean))).sort();
-    uniqueCrops.forEach(c => {
-      const opt = document.createElement('option');
-      opt.value = c;
-      opt.textContent = c;
-      cropSelect.appendChild(opt);
-    });
-  }
-
-  // Cập nhật bộ lọc động cho ấp
-  const apSelect = document.getElementById('filterSeasonAp');
-  if(apSelect && apSelect.options.length <= 1){
-    const uniqueAps = Array.from(new Set(seasons.map(s => s.region).filter(Boolean))).sort();
-    uniqueAps.forEach(a => {
-      const opt = document.createElement('option');
-      opt.value = a;
-      opt.textContent = a;
-      apSelect.appendChild(opt);
-    });
-  }
-
-  let list = seasons;
-  if(filterStatus !== 'all') list = list.filter(s => s.status === filterStatus);
-  if(filterCrop !== 'all') list = list.filter(s => s.crop === filterCrop);
-  if(filterAp !== 'all') list = list.filter(s => s.region === filterAp);
-
-  if(q){
-    list = list.filter(s =>
-      (s.name || '').toLowerCase().includes(q) ||
-      (s.crop || '').toLowerCase().includes(q) ||
-      (s.region || '').toLowerCase().includes(q) ||
-      householdName(s.householdId).toLowerCase().includes(q)
-    );
-  }
-  return sortedSeasons(list);
-}
-
-function renderTable(){
-  const list = currentFilteredSeasons();
-  const body = document.getElementById('tableBody');
-  if(!body) return;
-
-  if(list.length === 0){
-    body.innerHTML = emptyRow(14, 'Không tìm thấy mùa vụ phù hợp.');
-  }else{
-    body.innerHTML = list.map(s => {
-      const yieldHa = seasonYieldPerHa(s);
-      const yieldBadge = yieldHa > 0
-        ? (yieldHa >= 6.0
-            ? `<span class="badge-yield high" title="Năng suất cao">${yieldHa.toFixed(2)} t/ha</span>`
-            : yieldHa < 2.5
-            ? `<span class="badge-yield low" title="Năng suất thấp">${yieldHa.toFixed(2)} t/ha</span>`
-            : `<span class="badge-yield mid">${yieldHa.toFixed(2)} t/ha</span>`)
-        : '—';
-
-      return `
+    </div>`).join("")}function Yn(){let t=document.getElementById("searchSeason");if(t){t.value="",nt();let e=document.querySelector('button[data-subtab="ql-muavu"]');e&&e.click(),m("\u0110ang hi\u1EC3n th\u1ECB danh s\xE1ch m\xF9a v\u1EE5","ok")}}function Wn(){if(!S){m("Ch\u1EE9c n\u0103ng th\xEAm m\xF9a v\u1EE5 ch\u1EC9 d\xE0nh cho C\xE1n b\u1ED9 n\xF4ng nghi\u1EC7p","warn");return}hn()}function Jn(){if(!S){m("Ch\u1EE9c n\u0103ng ghi nh\u1EADn ki\u1EC3m \u0111\u1ECBnh ch\u1EC9 d\xE0nh cho C\xE1n b\u1ED9 n\xF4ng nghi\u1EC7p","warn");return}De()}function Zn(){if(!S&&(!p||p.role!=="buyer")){m("Vui l\xF2ng \u0111\u0103ng nh\u1EADp t\xE0i kho\u1EA3n C\xE1n b\u1ED9 ho\u1EB7c \u0110\u1ED1i t\xE1c thu mua \u0111\u1EC3 \u0111\u0103ng tin","warn"),Ut("login");return}Qe()}function ta(){location.hash="tro-ly-ai"}function ea(t){return t==="plan"?'<span class="chip chip-plan">L\xEAn k\u1EBF ho\u1EA1ch</span>':t==="growing"?'<span class="chip chip-growing">\u0110ang canh t\xE1c</span>':'<span class="chip chip-done">\u0110\xE3 thu ho\u1EA1ch</span>'}function wt(t){if(!t)return"\u2014";let e=k.find(n=>n.id===Number(t));return e?e.name:"\u2014"}function na(t){if(!R)return t;let e=[...t];return e.sort((n,a)=>{let i,o;return R==="household"?(i=wt(n.householdId),o=wt(a.householdId)):R==="revenue"?(i=W(n),o=W(a)):R==="yieldPerHa"?(i=Y(n),o=Y(a)):(i=n[R],o=a[R]),typeof i=="string"||typeof o=="string"?(i=(i==null?"":String(i)).toLowerCase(),o=(o==null?"":String(o)).toLowerCase(),i.localeCompare(o)*st):((i||0)-(o||0))*st}),e}function Ne(){let t=document.getElementById("filterStatus")?.value||"all",e=document.getElementById("filterSeasonCrop")?.value||"all",n=document.getElementById("filterSeasonAp")?.value||"all",a=(document.getElementById("searchSeason")?.value||"").trim().toLowerCase(),i=document.getElementById("filterSeasonCrop");i&&i.options.length<=1&&Array.from(new Set(y.map(u=>u.crop).filter(Boolean))).sort().forEach(u=>{let d=document.createElement("option");d.value=u,d.textContent=u,i.appendChild(d)});let o=document.getElementById("filterSeasonAp");o&&o.options.length<=1&&Array.from(new Set(y.map(u=>u.region).filter(Boolean))).sort().forEach(u=>{let d=document.createElement("option");d.value=u,d.textContent=u,o.appendChild(d)});let c=y;return t!=="all"&&(c=c.filter(s=>s.status===t)),e!=="all"&&(c=c.filter(s=>s.crop===e)),n!=="all"&&(c=c.filter(s=>s.region===n)),a&&(c=c.filter(s=>(s.name||"").toLowerCase().includes(a)||(s.crop||"").toLowerCase().includes(a)||(s.region||"").toLowerCase().includes(a)||wt(s.householdId).toLowerCase().includes(a))),na(c)}function nt(){let t=Ne(),e=document.getElementById("tableBody");e&&(t.length===0?e.innerHTML=ht(14,"Kh\xF4ng t\xECm th\u1EA5y m\xF9a v\u1EE5 ph\xF9 h\u1EE3p."):e.innerHTML=t.map(n=>{let a=Y(n),i=a>0?a>=6?`<span class="badge-yield high" title="N\u0103ng su\u1EA5t cao">${a.toFixed(2)} t/ha</span>`:a<2.5?`<span class="badge-yield low" title="N\u0103ng su\u1EA5t th\u1EA5p">${a.toFixed(2)} t/ha</span>`:`<span class="badge-yield mid">${a.toFixed(2)} t/ha</span>`:"\u2014";return`
       <tr>
-        <td><strong>${esc(s.name)}</strong></td>
-        <td>${esc(s.crop)}</td>
-        <td>${esc(householdName(s.householdId))}</td>
-        <td>${esc(s.region)}</td>
-        <td>${esc(s.start)}</td>
-        <td>${esc(s.end)}</td>
-        <td>${esc(s.area)}</td>
-        <td>${esc(s.yieldTon)}</td>
-        <td>${yieldBadge}</td>
-        <td>${s.price ? money(s.price) : '—'}</td>
-        <td>${seasonRevenue(s) ? money(seasonRevenue(s)) : '—'}</td>
-        <td>${s.specialty ? '<span class="chip chip-specialty">Đặc sản</span>' : ''}</td>
-        <td>${statusChip(s.status)}</td>
+        <td><strong>${r(n.name)}</strong></td>
+        <td>${r(n.crop)}</td>
+        <td>${r(wt(n.householdId))}</td>
+        <td>${r(n.region)}</td>
+        <td>${r(n.start)}</td>
+        <td>${r(n.end)}</td>
+        <td>${r(n.area)}</td>
+        <td>${r(n.yieldTon)}</td>
+        <td>${i}</td>
+        <td>${n.price?_(n.price):"\u2014"}</td>
+        <td>${W(n)?_(W(n)):"\u2014"}</td>
+        <td>${n.specialty?'<span class="chip chip-specialty">\u0110\u1EB7c s\u1EA3n</span>':""}</td>
+        <td>${ea(n.status)}</td>
         <td class="row-actions">
-          ${canManage(s.region) ? `<button class="btn btn-sm" onclick="openForm(${s.id})">Sửa</button>
-            <button class="btn btn-sm btn-danger" onclick="deleteSeason(${s.id})">Xóa</button>` : ''}
+          ${L(n.region)?`<button class="btn btn-sm" onclick="openForm(${n.id})">S\u1EEDa</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteSeason(${n.id})">X\xF3a</button>`:""}
         </td>
-      </tr>`;
-    }).join('');
-  }
-
-  document.querySelectorAll('#subview-ql-muavu th.sortable').forEach(th => {
-    const key = th.getAttribute('data-sort');
-    th.textContent = th.textContent.replace(/ [▲▼]$/, '');
-    if(key === sortKey){
-      th.textContent += sortDir === 1 ? ' ▲' : ' ▼';
-    }
-  });
-}
-
-function exportCsv(){
-  const list = currentFilteredSeasons();
-  const header = ['Tên mùa vụ','Cây trồng','Hộ trồng','Ấp','Bắt đầu','Kết thúc','Diện tích (ha)','Sản lượng (tấn)','Năng suất (tấn/ha)','Giá TT (đ/kg)','Giá trị ước tính (đ)','Đặc sản','Trạng thái'];
-  const rows = list.map(s => [
-    s.name, s.crop, householdName(s.householdId), s.region, s.start || '', s.end || '',
-    s.area, s.yieldTon, seasonYieldPerHa(s).toFixed(2), s.price || 0, seasonRevenue(s), s.specialty ? 'Có' : 'Không',
-    s.status === 'plan' ? 'Lên kế hoạch' : s.status === 'growing' ? 'Đang canh tác' : 'Đã thu hoạch'
-  ]);
-  const csv = [header, ...rows].map(r => r.map(csvEscape).join(',')).join('\n');
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'mua-vu-binh-my.csv';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  toast('Đã xuất file CSV mùa vụ', 'ok');
-}
-
-function renderChart(){
-  const ctx = document.getElementById('yieldChart');
-  if(!ctx) return;
-  if(typeof Chart === 'undefined'){
-    ctx.replaceWith(Object.assign(document.createElement('p'), {
-      className: 'empty',
-      innerHTML: '<svg class="icon"><use href="#icon-sprout"/></svg>Không tải được thư viện biểu đồ (cần kết nối mạng để tải Chart.js).'
-    }));
-    return;
-  }
-  const labels = seasons.map(s => s.name);
-  const data = seasons.map(s => Number(s.yieldTon || 0));
-  if(chart) chart.destroy();
-  chart = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [{
-        label: 'Sản lượng (tấn)',
-        data,
-        backgroundColor: '#2F9E44',
-        borderRadius: 6,
-        maxBarThickness: 46
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: {
-        y: { beginAtZero: true, grid: { color: '#E3E7DE' } },
-        x: { grid: { display: false } }
-      }
-    }
-  });
-}
-
-function renderActivity(){
-  const el = document.getElementById('activityList');
-  if(!el) return;
-  if(activity.length === 0){
-    el.innerHTML = '<p class="empty" style="padding:6px 0;"><svg class="icon"><use href="#icon-sprout"/></svg>Chưa có hoạt động nào.</p>';
-    return;
-  }
-  el.innerHTML = activity.map(a => `
+      </tr>`}).join(""),document.querySelectorAll("#subview-ql-muavu th.sortable").forEach(n=>{let a=n.getAttribute("data-sort");n.textContent=n.textContent.replace(/ [▲▼]$/,""),a===R&&(n.textContent+=st===1?" \u25B2":" \u25BC")}))}function aa(){let t=Ne(),e=["T\xEAn m\xF9a v\u1EE5","C\xE2y tr\u1ED3ng","H\u1ED9 tr\u1ED3ng","\u1EA4p","B\u1EAFt \u0111\u1EA7u","K\u1EBFt th\xFAc","Di\u1EC7n t\xEDch (ha)","S\u1EA3n l\u01B0\u1EE3ng (t\u1EA5n)","N\u0103ng su\u1EA5t (t\u1EA5n/ha)","Gi\xE1 TT (\u0111/kg)","Gi\xE1 tr\u1ECB \u01B0\u1EDBc t\xEDnh (\u0111)","\u0110\u1EB7c s\u1EA3n","Tr\u1EA1ng th\xE1i"],n=t.map(s=>[s.name,s.crop,wt(s.householdId),s.region,s.start||"",s.end||"",s.area,s.yieldTon,Y(s).toFixed(2),s.price||0,W(s),s.specialty?"C\xF3":"Kh\xF4ng",s.status==="plan"?"L\xEAn k\u1EBF ho\u1EA1ch":s.status==="growing"?"\u0110ang canh t\xE1c":"\u0110\xE3 thu ho\u1EA1ch"]),a=[e,...n].map(s=>s.map(Mn).join(",")).join(`
+`),i=new Blob(["\uFEFF"+a],{type:"text/csv;charset=utf-8;"}),o=URL.createObjectURL(i),c=document.createElement("a");c.href=o,c.download="mua-vu-binh-my.csv",document.body.appendChild(c),c.click(),document.body.removeChild(c),URL.revokeObjectURL(o),m("\u0110\xE3 xu\u1EA5t file CSV m\xF9a v\u1EE5","ok")}function oa(){let t=document.getElementById("yieldChart");if(!t)return;if(typeof Chart>"u"){t.replaceWith(Object.assign(document.createElement("p"),{className:"empty",innerHTML:'<svg class="icon"><use href="#icon-sprout"/></svg>Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c th\u01B0 vi\u1EC7n bi\u1EC3u \u0111\u1ED3 (c\u1EA7n k\u1EBFt n\u1ED1i m\u1EA1ng \u0111\u1EC3 t\u1EA3i Chart.js).'}));return}let e=y.map(a=>a.name),n=y.map(a=>Number(a.yieldTon||0));Xt&&Xt.destroy(),Xt=new Chart(t,{type:"bar",data:{labels:e,datasets:[{label:"S\u1EA3n l\u01B0\u1EE3ng (t\u1EA5n)",data:n,backgroundColor:"#2F9E44",borderRadius:6,maxBarThickness:46}]},options:{responsive:!0,plugins:{legend:{display:!1}},scales:{y:{beginAtZero:!0,grid:{color:"#E3E7DE"}},x:{grid:{display:!1}}}}})}function He(){let t=document.getElementById("activityList");if(t){if(j.length===0){t.innerHTML='<p class="empty" style="padding:6px 0;"><svg class="icon"><use href="#icon-sprout"/></svg>Ch\u01B0a c\xF3 ho\u1EA1t \u0111\u1ED9ng n\xE0o.</p>';return}t.innerHTML=j.map(e=>`
     <div class="activity-item">
       <span class="adot"></span>
-      <div><div class="atext">${esc(a.text)}</div><div class="atime">${relTime(a.ts)}</div></div>
-    </div>`).join('');
-}
-
-function safeRender(fn, label){
-  try{ fn(); }
-  catch(e){ console.error('Lỗi hiển thị (' + (label || fn.name) + '):', e); }
-}
-
-function renderAll(){
-  safeRender(renderAuthArea);
-  safeRender(renderStatsGrid);
-  safeRender(renderSmartAlerts);
-  safeRender(renderTable);
-  safeRender(renderChart);
-  safeRender(renderHouseholds);
-  safeRender(renderWardSummary);
-  safeRender(renderActivity);
-  safeRender(renderQuality);
-  safeRender(renderOutputs);
-  safeRender(renderProcurements);
-  safeRender(renderProducts);
-}
-
-/* ============ Kiểm định chất lượng ============ */
-function seasonLabel(id){
-  if(!id) return '—';
-  const s = seasons.find(x => x.id === Number(id));
-  return s ? s.name : '—';
-}
-
-const CERT_STANDARDS = ['VietGAP / Nội địa', 'Siêu thị trong nước', 'Xuất khẩu (GlobalGAP/MRL quốc tế)'];
-
-function seasonCertStatus(seasonId, standard){
-  const tests = qualityTests.filter(q => q.seasonId === seasonId && q.standard === standard);
-  if(tests.length === 0) return 'none';
-  if(tests.some(t => t.result === 'fail')) return 'fail';
-  if(tests.some(t => t.result === 'pending')) return 'pending';
-  return 'pass';
-}
-
-function certChip(status){
-  return status === 'pass' ? '<span class="chip chip-pass">Đạt</span>'
-    : status === 'fail' ? '<span class="chip chip-fail">Chưa đạt</span>'
-    : status === 'pending' ? '<span class="chip chip-pending">Chờ kết quả</span>'
-    : '<span class="chip" style="background:#EEE;color:var(--ink-faint);">Chưa kiểm định</span>';
-}
-
-function renderCertTable(){
-  const body = document.getElementById('certTableBody');
-  if(!body) return;
-  if(seasons.length === 0){
-    body.innerHTML = emptyRow(4, 'Chưa có mùa vụ nào.');
-    return;
-  }
-  body.innerHTML = seasons.map(s => `
+      <div><div class="atext">${r(e.text)}</div><div class="atime">${Nn(e.ts)}</div></div>
+    </div>`).join("")}}function H(t,e){try{t()}catch(n){console.error("L\u1ED7i hi\u1EC3n th\u1ECB ("+(e||t.name)+"):",n)}}function B(){H(Xn),H(Kn),H(zn),H(nt),H(oa),H(Pt),H(lo),H(He),H(St),H(Tt),H(qt),H(F)}function K(t){if(!t)return"\u2014";let e=y.find(n=>n.id===Number(t));return e?e.name:"\u2014"}function bt(t,e){let n=I.filter(a=>a.seasonId===t&&a.standard===e);return n.length===0?"none":n.some(a=>a.result==="fail")?"fail":n.some(a=>a.result==="pending")?"pending":"pass"}function Yt(t){return t==="pass"?'<span class="chip chip-pass">\u0110\u1EA1t</span>':t==="fail"?'<span class="chip chip-fail">Ch\u01B0a \u0111\u1EA1t</span>':t==="pending"?'<span class="chip chip-pending">Ch\u1EDD k\u1EBFt qu\u1EA3</span>':'<span class="chip" style="background:#EEE;color:var(--ink-faint);">Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh</span>'}function ia(){let t=document.getElementById("certTableBody");if(t){if(y.length===0){t.innerHTML=ht(4,"Ch\u01B0a c\xF3 m\xF9a v\u1EE5 n\xE0o.");return}t.innerHTML=y.map(e=>`
     <tr>
-      <td>${esc(s.name)}</td>
-      <td>${certChip(seasonCertStatus(s.id, 'VietGAP / Nội địa'))}</td>
-      <td>${certChip(seasonCertStatus(s.id, 'Siêu thị trong nước'))}</td>
-      <td>${certChip(seasonCertStatus(s.id, 'Xuất khẩu (GlobalGAP/MRL quốc tế)'))}</td>
-    </tr>`).join('');
-}
-
-function resultChip(r){
-  return r === 'pass' ? '<span class="chip chip-pass">Đạt</span>'
-    : r === 'fail' ? '<span class="chip chip-fail">Không đạt</span>'
-    : '<span class="chip chip-pending">Chờ kết quả</span>';
-}
-
-function renderQualityStats(){
-  const total = qualityTests.length;
-  const passCount = qualityTests.filter(q => q.result === 'pass').length;
-  const failCount = qualityTests.filter(q => q.result === 'fail').length;
-  const pendingCount = qualityTests.filter(q => q.result === 'pending').length;
-  const rate = total > 0 ? Math.round((passCount / total) * 100) : 0;
-  const exportPassCount = seasons.filter(s => seasonCertStatus(s.id, 'Xuất khẩu (GlobalGAP/MRL quốc tế)') === 'pass').length;
-  const supermarketPassCount = seasons.filter(s => seasonCertStatus(s.id, 'Siêu thị trong nước') === 'pass').length;
-
-  const statsEl = document.getElementById('qualityStats');
-  if(!statsEl) return;
-  statsEl.innerHTML = `
-    <div class="stat-card" style="--accent:var(--paddy)"><div class="num-face">${total}</div><div class="lbl">Lượt kiểm định</div></div>
-    <div class="stat-card" style="--accent:var(--paddy-deep)"><div class="num-face">${rate}%</div><div class="lbl">Tỷ lệ đạt chuẩn</div></div>
-    <div class="stat-card" style="--accent:var(--danger)"><div class="num-face">${failCount}</div><div class="lbl">Không đạt — cần xử lý</div></div>
-    <div class="stat-card" style="--accent:var(--papaya)"><div class="num-face">${pendingCount}</div><div class="lbl">Đang chờ kết quả</div></div>
-    <div class="stat-card" style="--accent:var(--river)"><div class="num-face">${supermarketPassCount}/${seasons.length}</div><div class="lbl">Mùa vụ đạt chuẩn siêu thị</div></div>
-    <div class="stat-card" style="--accent:var(--bloom)"><div class="num-face">${exportPassCount}/${seasons.length}</div><div class="lbl">Mùa vụ đạt chuẩn xuất khẩu</div></div>`;
-}
-
-function currentFilteredQuality(){
-  const filter = document.getElementById('filterQualityResult')?.value || 'all';
-  const std = document.getElementById('filterQualityStandard')?.value || 'all';
-  const q = (document.getElementById('searchQuality')?.value || '').trim().toLowerCase();
-  let list = filter === 'all' ? qualityTests : qualityTests.filter(x => x.result === filter);
-  if(std !== 'all') list = list.filter(x => x.standard === std);
-  if(q){
-    list = list.filter(x =>
-      seasonLabel(x.seasonId).toLowerCase().includes(q) ||
-      (x.metric || '').toLowerCase().includes(q) ||
-      (x.lab || '').toLowerCase().includes(q)
-    );
-  }
-  return list;
-}
-
-function renderQuality(){
-  renderQualityStats();
-  renderCertTable();
-  const list = currentFilteredQuality();
-  const body = document.getElementById('qualityTableBody');
-  if(!body) return;
-  if(list.length === 0){
-    body.innerHTML = emptyRow(9, 'Chưa có dữ liệu kiểm định phù hợp.');
-    return;
-  }
-  body.innerHTML = list.map(q => {
-    const pct = q.threshold ? Math.min(150, Math.round((Number(q.value || 0) / Number(q.threshold)) * 100)) : 0;
-    const barColor = q.result === 'fail' ? 'var(--danger)' : q.result === 'pending' ? 'var(--papaya)' : 'var(--paddy)';
-    return `
+      <td>${r(e.name)}</td>
+      <td>${Yt(bt(e.id,"VietGAP / N\u1ED9i \u0111\u1ECBa"))}</td>
+      <td>${Yt(bt(e.id,"Si\xEAu th\u1ECB trong n\u01B0\u1EDBc"))}</td>
+      <td>${Yt(bt(e.id,"Xu\u1EA5t kh\u1EA9u (GlobalGAP/MRL qu\u1ED1c t\u1EBF)"))}</td>
+    </tr>`).join("")}}function ca(t){return t==="pass"?'<span class="chip chip-pass">\u0110\u1EA1t</span>':t==="fail"?'<span class="chip chip-fail">Kh\xF4ng \u0111\u1EA1t</span>':'<span class="chip chip-pending">Ch\u1EDD k\u1EBFt qu\u1EA3</span>'}function sa(){let t=I.length,e=I.filter(u=>u.result==="pass").length,n=I.filter(u=>u.result==="fail").length,a=I.filter(u=>u.result==="pending").length,i=t>0?Math.round(e/t*100):0,o=y.filter(u=>bt(u.id,"Xu\u1EA5t kh\u1EA9u (GlobalGAP/MRL qu\u1ED1c t\u1EBF)")==="pass").length,c=y.filter(u=>bt(u.id,"Si\xEAu th\u1ECB trong n\u01B0\u1EDBc")==="pass").length,s=document.getElementById("qualityStats");s&&(s.innerHTML=`
+    <div class="stat-card" style="--accent:var(--paddy)"><div class="num-face">${t}</div><div class="lbl">L\u01B0\u1EE3t ki\u1EC3m \u0111\u1ECBnh</div></div>
+    <div class="stat-card" style="--accent:var(--paddy-deep)"><div class="num-face">${i}%</div><div class="lbl">T\u1EF7 l\u1EC7 \u0111\u1EA1t chu\u1EA9n</div></div>
+    <div class="stat-card" style="--accent:var(--danger)"><div class="num-face">${n}</div><div class="lbl">Kh\xF4ng \u0111\u1EA1t \u2014 c\u1EA7n x\u1EED l\xFD</div></div>
+    <div class="stat-card" style="--accent:var(--papaya)"><div class="num-face">${a}</div><div class="lbl">\u0110ang ch\u1EDD k\u1EBFt qu\u1EA3</div></div>
+    <div class="stat-card" style="--accent:var(--river)"><div class="num-face">${c}/${y.length}</div><div class="lbl">M\xF9a v\u1EE5 \u0111\u1EA1t chu\u1EA9n si\xEAu th\u1ECB</div></div>
+    <div class="stat-card" style="--accent:var(--bloom)"><div class="num-face">${o}/${y.length}</div><div class="lbl">M\xF9a v\u1EE5 \u0111\u1EA1t chu\u1EA9n xu\u1EA5t kh\u1EA9u</div></div>`)}function ra(){let t=document.getElementById("filterQualityResult")?.value||"all",e=document.getElementById("filterQualityStandard")?.value||"all",n=(document.getElementById("searchQuality")?.value||"").trim().toLowerCase(),a=t==="all"?I:I.filter(i=>i.result===t);return e!=="all"&&(a=a.filter(i=>i.standard===e)),n&&(a=a.filter(i=>K(i.seasonId).toLowerCase().includes(n)||(i.metric||"").toLowerCase().includes(n)||(i.lab||"").toLowerCase().includes(n))),a}function St(){sa(),ia();let t=ra(),e=document.getElementById("qualityTableBody");if(e){if(t.length===0){e.innerHTML=ht(9,"Ch\u01B0a c\xF3 d\u1EEF li\u1EC7u ki\u1EC3m \u0111\u1ECBnh ph\xF9 h\u1EE3p.");return}e.innerHTML=t.map(n=>{let a=n.threshold?Math.min(150,Math.round(Number(n.value||0)/Number(n.threshold)*100)):0,i=n.result==="fail"?"var(--danger)":n.result==="pending"?"var(--papaya)":"var(--paddy)";return`
       <tr>
-        <td><strong>${esc(seasonLabel(q.seasonId))}</strong></td>
-        <td>${esc(q.metric)}</td>
-        <td>${esc(q.standard) || '—'}</td>
-        <td>${esc(q.value)}${q.unit ? ' ' + esc(q.unit) : ''}
-          <div class="metric-bar"><div class="metric-bar-fill" style="width:${Math.min(100, pct)}%;background:${barColor}"></div></div>
+        <td><strong>${r(K(n.seasonId))}</strong></td>
+        <td>${r(n.metric)}</td>
+        <td>${r(n.standard)||"\u2014"}</td>
+        <td>${r(n.value)}${n.unit?" "+r(n.unit):""}
+          <div class="metric-bar"><div class="metric-bar-fill" style="width:${Math.min(100,a)}%;background:${i}"></div></div>
         </td>
-        <td>${q.threshold ? esc(q.threshold) + (q.unit ? ' ' + esc(q.unit) : '') : '—'}</td>
-        <td>${esc(q.date)}</td>
-        <td>${esc(q.lab)}</td>
-        <td>${resultChip(q.result)}</td>
+        <td>${n.threshold?r(n.threshold)+(n.unit?" "+r(n.unit):""):"\u2014"}</td>
+        <td>${r(n.date)}</td>
+        <td>${r(n.lab)}</td>
+        <td>${ca(n.result)}</td>
         <td class="row-actions">
-          ${canManage(seasonRegion(q.seasonId)) ? `<button class="btn btn-sm" onclick="openQualityForm(${q.id})">Sửa</button>
-            <button class="btn btn-sm btn-danger" onclick="deleteQualityTest(${q.id})">Xóa</button>` : ''}
+          ${L(tt(n.seasonId))?`<button class="btn btn-sm" onclick="openQualityForm(${n.id})">S\u1EEDa</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteQualityTest(${n.id})">X\xF3a</button>`:""}
         </td>
-      </tr>`;
-  }).join('');
-}
-
-function openQualityForm(id){
-  if(id && !canManage(seasonRegion(qualityTests.find(x => x.id === id)?.seasonId))){
-    toast('Bạn không có quyền sửa lần kiểm định này', 'warn');
-    return;
-  }
-  clearFieldErrors('qualityOverlay');
-  document.getElementById('qualityOverlay').classList.add('show');
-  const seasonSelect = document.getElementById('q_season');
-  const allowedSeasons = seasons.filter(s => canManage(s.region));
-  seasonSelect.innerHTML = allowedSeasons.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
-
-  if(id){
-    const q = qualityTests.find(x => x.id === id);
-    document.getElementById('qualityFormTitle').textContent = 'Sửa lần kiểm định';
-    document.getElementById('q_editId').value = id;
-    seasonSelect.value = q.seasonId || '';
-    document.getElementById('q_metric').value = q.metric;
-    document.getElementById('q_value').value = q.value;
-    document.getElementById('q_unit').value = q.unit || '';
-    document.getElementById('q_standard').value = q.standard || 'VietGAP / Nội địa';
-    document.getElementById('q_threshold').value = q.threshold || '';
-    document.getElementById('q_date').value = q.date || '';
-    document.getElementById('q_lab').value = q.lab || '';
-    document.getElementById('q_result').value = q.result;
-    document.getElementById('q_note').value = q.note || '';
-  }else{
-    document.getElementById('qualityFormTitle').textContent = 'Thêm lần kiểm định';
-    document.getElementById('q_editId').value = '';
-    ['q_metric','q_value','q_unit','q_threshold','q_date','q_lab','q_note'].forEach(k => document.getElementById(k).value = '');
-    document.getElementById('q_standard').value = 'VietGAP / Nội địa';
-    document.getElementById('q_result').value = 'pending';
-  }
-}
-
-function closeQualityForm(){
-  document.getElementById('qualityOverlay').classList.remove('show');
-  clearFieldErrors('qualityOverlay');
-}
-
-async function saveQualityForm(){
-  if(!isAdmin){
-    toast('Chỉ cán bộ nông nghiệp có quyền lưu kiểm định', 'warn');
-    return;
-  }
-  clearFieldErrors('qualityOverlay');
-
-  const id = document.getElementById('q_editId').value;
-  const seasonIdVal = document.getElementById('q_season').value;
-  const metricVal = document.getElementById('q_metric').value.trim();
-  const valueVal = document.getElementById('q_value').value.trim();
-  const dateVal = document.getElementById('q_date').value;
-
-  let hasErr = false;
-  if(!seasonIdVal){
-    setFieldError('q_season', 'err_q_season', 'Vui lòng chọn mùa vụ kiểm định.');
-    hasErr = true;
-  }
-  if(!metricVal){
-    setFieldError('q_metric', 'err_q_metric', 'Vui lòng nhập tên chỉ tiêu.');
-    hasErr = true;
-  }
-  if(!valueVal || isNaN(Number(valueVal))){
-    setFieldError('q_value', 'err_q_value', 'Vui lòng nhập giá trị đo hợp lệ.');
-    hasErr = true;
-  }
-  if(!dateVal){
-    setFieldError('q_date', 'err_q_date', 'Vui lòng chọn ngày kiểm nghiệm.');
-    hasErr = true;
-  }
-  if(hasErr) return;
-
-  const record = {
-    seasonId: Number(seasonIdVal),
-    metric: metricVal,
-    value: Number(valueVal),
-    unit: document.getElementById('q_unit').value.trim(),
-    standard: document.getElementById('q_standard').value,
-    threshold: Number(document.getElementById('q_threshold').value || 0),
-    date: dateVal,
-    lab: document.getElementById('q_lab').value.trim(),
-    result: document.getElementById('q_result').value,
-    note: document.getElementById('q_note').value.trim()
-  };
-
-  if(!canManage(seasonRegion(record.seasonId))){
-    toast('Bạn không có quyền phụ trách mùa vụ này', 'warn');
-    return;
-  }
-
-  setBtnLoading('btnSaveQuality', true);
-  try{
-    if(id){
-      const idx = qualityTests.findIndex(x => x.id === Number(id));
-      qualityTests[idx] = { ...qualityTests[idx], ...record };
-    }else{
-      const newId = qualityTests.length ? Math.max(...qualityTests.map(x => x.id)) + 1 : 1;
-      qualityTests.push({ id: newId, ...record });
-    }
-    await saveQualityTests();
-    await logActivity((id ? 'Cập nhật kiểm định: ' : 'Thêm kiểm định mới: ') + record.metric + ' (' + seasonLabel(record.seasonId) + ') — bởi ' + currentUser.user);
-    closeQualityForm();
-    renderAll();
-    toast('Đã lưu kết quả kiểm định', 'ok');
-  }catch(e){
-    console.error(e);
-    toast('Lỗi khi lưu kiểm định: ' + e.message, 'warn');
-  }finally{
-    setBtnLoading('btnSaveQuality', false);
-  }
-}
-
-async function deleteQualityTest(id){
-  const q = qualityTests.find(x => x.id === id);
-  if(!canManage(seasonRegion(q?.seasonId))){
-    toast('Bạn không có quyền xóa lần kiểm định này', 'warn');
-    return;
-  }
-  const ok = await showConfirmDialog(
-    'Xóa lần kiểm định',
-    `Bạn có chắc muốn xóa kết quả kiểm định "${q?.metric}" của ${seasonLabel(q?.seasonId)}?`,
-    'Xóa kết quả',
-    true
-  );
-  if(!ok) return;
-
-  qualityTests = qualityTests.filter(x => x.id !== id);
-  await saveQualityTests();
-  await logActivity('Xóa lần kiểm định: ' + (q ? q.metric : '') + ' — bởi ' + currentUser.user);
-  renderAll();
-  toast('Đã xóa lần kiểm định', 'warn');
-}
-
-/* ============ Đầu ra cho nguồn hàng ============ */
-function outputStatusChip(s){
-  return s === 'done' ? '<span class="chip chip-out-done">Đã giao hàng</span>'
-    : s === 'negotiating' ? '<span class="chip chip-out-negotiating">Đang đàm phán</span>'
-    : '<span class="chip chip-out-cancelled">Đã hủy</span>';
-}
-
-function outputRevenue(o){
-  return Number(o.volume || 0) * 1000 * Number(o.price || 0);
-}
-
-function renderOutputStats(){
-  const doneList = outputs.filter(o => o.status === 'done');
-  const totalVolume = doneList.reduce((a, o) => a + Number(o.volume || 0), 0);
-  const totalRevenue = doneList.reduce((a, o) => a + outputRevenue(o), 0);
-  const buyerCount = new Set(outputs.map(o => o.buyer)).size;
-  const negotiating = outputs.filter(o => o.status === 'negotiating').length;
-
-  const el = document.getElementById('outputStats');
-  if(!el) return;
-  el.innerHTML = `
-    <div class="stat-card" style="--accent:var(--river)"><div class="num-face">${money(totalVolume)}</div><div class="lbl">Tấn đã tiêu thụ</div></div>
-    <div class="stat-card" style="--accent:var(--paddy-deep)"><div class="num-face">${(totalRevenue / 1000000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })}tr</div><div class="lbl">Doanh thu thực tế</div></div>
-    <div class="stat-card" style="--accent:var(--bloom)"><div class="num-face">${buyerCount}</div><div class="lbl">Đối tác thu mua</div></div>
-    <div class="stat-card" style="--accent:var(--papaya)"><div class="num-face">${negotiating}</div><div class="lbl">Hợp đồng đang đàm phán</div></div>`;
-}
-
-function currentFilteredOutputs(){
-  const filterStatus = document.getElementById('filterOutputStatus')?.value || 'all';
-  const filterChannel = document.getElementById('filterOutputChannel')?.value || 'all';
-  const q = (document.getElementById('searchOutput')?.value || '').trim().toLowerCase();
-
-  let list = filterStatus === 'all' ? outputs : outputs.filter(x => x.status === filterStatus);
-  if(filterChannel !== 'all') list = list.filter(x => x.channel === filterChannel);
-
-  if(q){
-    list = list.filter(x =>
-      seasonLabel(x.seasonId).toLowerCase().includes(q) ||
-      (x.buyer || '').toLowerCase().includes(q) ||
-      (x.channel || '').toLowerCase().includes(q)
-    );
-  }
-  return list;
-}
-
-function renderOutputs(){
-  renderOutputStats();
-  const list = currentFilteredOutputs();
-  const body = document.getElementById('outputTableBody');
-  if(!body) return;
-  if(list.length === 0){
-    body.innerHTML = emptyRow(9, 'Chưa có dữ liệu đầu ra phù hợp.');
-    return;
-  }
-  body.innerHTML = list.map(o => `
+      </tr>`}).join("")}}function De(t){if(t&&!L(tt(I.find(a=>a.id===t)?.seasonId))){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n s\u1EEDa l\u1EA7n ki\u1EC3m \u0111\u1ECBnh n\xE0y","warn");return}w("qualityOverlay"),document.getElementById("qualityOverlay").classList.add("show"),O(document.getElementById("qualityOverlay"));let e=document.getElementById("q_season"),n=y.filter(a=>L(a.region));if(e.innerHTML=n.map(a=>`<option value="${a.id}">${r(a.name)}</option>`).join(""),t){let a=I.find(i=>i.id===t);document.getElementById("qualityFormTitle").textContent="S\u1EEDa l\u1EA7n ki\u1EC3m \u0111\u1ECBnh",document.getElementById("q_editId").value=t,e.value=a.seasonId||"",document.getElementById("q_metric").value=a.metric,document.getElementById("q_value").value=a.value,document.getElementById("q_unit").value=a.unit||"",document.getElementById("q_standard").value=a.standard||"VietGAP / N\u1ED9i \u0111\u1ECBa",document.getElementById("q_threshold").value=a.threshold||"",document.getElementById("q_date").value=a.date||"",document.getElementById("q_lab").value=a.lab||"",document.getElementById("q_result").value=a.result,document.getElementById("q_note").value=a.note||""}else document.getElementById("qualityFormTitle").textContent="Th\xEAm l\u1EA7n ki\u1EC3m \u0111\u1ECBnh",document.getElementById("q_editId").value="",["q_metric","q_value","q_unit","q_threshold","q_date","q_lab","q_note"].forEach(a=>document.getElementById(a).value=""),document.getElementById("q_standard").value="VietGAP / N\u1ED9i \u0111\u1ECBa",document.getElementById("q_result").value="pending"}function Oe(){document.getElementById("qualityOverlay").classList.remove("show"),w("qualityOverlay"),M()}async function la(){if(!S){m("Ch\u1EC9 c\xE1n b\u1ED9 n\xF4ng nghi\u1EC7p c\xF3 quy\u1EC1n l\u01B0u ki\u1EC3m \u0111\u1ECBnh","warn");return}w("qualityOverlay");let t=document.getElementById("q_editId").value,e=document.getElementById("q_season").value,n=document.getElementById("q_metric").value.trim(),a=document.getElementById("q_value").value.trim(),i=document.getElementById("q_date").value,o=!1;if(e||(b("q_season","err_q_season","Vui l\xF2ng ch\u1ECDn m\xF9a v\u1EE5 ki\u1EC3m \u0111\u1ECBnh."),o=!0),n||(b("q_metric","err_q_metric","Vui l\xF2ng nh\u1EADp t\xEAn ch\u1EC9 ti\xEAu."),o=!0),(!a||isNaN(Number(a)))&&(b("q_value","err_q_value","Vui l\xF2ng nh\u1EADp gi\xE1 tr\u1ECB \u0111o h\u1EE3p l\u1EC7."),o=!0),i||(b("q_date","err_q_date","Vui l\xF2ng ch\u1ECDn ng\xE0y ki\u1EC3m nghi\u1EC7m."),o=!0),o)return;let c={seasonId:Number(e),metric:n,value:Number(a),unit:document.getElementById("q_unit").value.trim(),standard:document.getElementById("q_standard").value,threshold:Number(document.getElementById("q_threshold").value||0),date:i,lab:document.getElementById("q_lab").value.trim(),result:document.getElementById("q_result").value,note:document.getElementById("q_note").value.trim()};if(!L(tt(c.seasonId))){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n ph\u1EE5 tr\xE1ch m\xF9a v\u1EE5 n\xE0y","warn");return}$("btnSaveQuality",!0);try{if(t){let s=I.findIndex(u=>u.id===Number(t));I[s]={...I[s],...c}}else{let s=I.length?Math.max(...I.map(u=>u.id))+1:1;I.push({id:s,...c})}await re(),await T((t?"C\u1EADp nh\u1EADt ki\u1EC3m \u0111\u1ECBnh: ":"Th\xEAm ki\u1EC3m \u0111\u1ECBnh m\u1EDBi: ")+c.metric+" ("+K(c.seasonId)+") \u2014 b\u1EDFi "+h.user),Oe(),B(),m("\u0110\xE3 l\u01B0u k\u1EBFt qu\u1EA3 ki\u1EC3m \u0111\u1ECBnh","ok")}catch(s){console.error(s),m("L\u1ED7i khi l\u01B0u ki\u1EC3m \u0111\u1ECBnh: "+s.message,"warn")}finally{$("btnSaveQuality",!1)}}async function ua(t){let e=I.find(a=>a.id===t);if(!L(tt(e?.seasonId))){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n x\xF3a l\u1EA7n ki\u1EC3m \u0111\u1ECBnh n\xE0y","warn");return}await J("X\xF3a l\u1EA7n ki\u1EC3m \u0111\u1ECBnh",`B\u1EA1n c\xF3 ch\u1EAFc mu\u1ED1n x\xF3a k\u1EBFt qu\u1EA3 ki\u1EC3m \u0111\u1ECBnh "${e?.metric}" c\u1EE7a ${K(e?.seasonId)}?`,"X\xF3a k\u1EBFt qu\u1EA3",!0)&&(I=I.filter(a=>a.id!==t),await re(),await T("X\xF3a l\u1EA7n ki\u1EC3m \u0111\u1ECBnh: "+(e?e.metric:"")+" \u2014 b\u1EDFi "+h.user),B(),m("\u0110\xE3 x\xF3a l\u1EA7n ki\u1EC3m \u0111\u1ECBnh","warn"))}function da(t){return t==="done"?'<span class="chip chip-out-done">\u0110\xE3 giao h\xE0ng</span>':t==="negotiating"?'<span class="chip chip-out-negotiating">\u0110ang \u0111\xE0m ph\xE1n</span>':'<span class="chip chip-out-cancelled">\u0110\xE3 h\u1EE7y</span>'}function Mt(t){return Number(t.volume||0)*1e3*Number(t.price||0)}function ma(){let t=C.filter(c=>c.status==="done"),e=t.reduce((c,s)=>c+Number(s.volume||0),0),n=t.reduce((c,s)=>c+Mt(s),0),a=new Set(C.map(c=>c.buyer)).size,i=C.filter(c=>c.status==="negotiating").length,o=document.getElementById("outputStats");o&&(o.innerHTML=`
+    <div class="stat-card" style="--accent:var(--river)"><div class="num-face">${_(e)}</div><div class="lbl">T\u1EA5n \u0111\xE3 ti\xEAu th\u1EE5</div></div>
+    <div class="stat-card" style="--accent:var(--paddy-deep)"><div class="num-face">${(n/1e6).toLocaleString("vi-VN",{maximumFractionDigits:1})}tr</div><div class="lbl">Doanh thu th\u1EF1c t\u1EBF</div></div>
+    <div class="stat-card" style="--accent:var(--bloom)"><div class="num-face">${a}</div><div class="lbl">\u0110\u1ED1i t\xE1c thu mua</div></div>
+    <div class="stat-card" style="--accent:var(--papaya)"><div class="num-face">${i}</div><div class="lbl">H\u1EE3p \u0111\u1ED3ng \u0111ang \u0111\xE0m ph\xE1n</div></div>`)}function ha(){let t=document.getElementById("filterOutputStatus")?.value||"all",e=document.getElementById("filterOutputChannel")?.value||"all",n=(document.getElementById("searchOutput")?.value||"").trim().toLowerCase(),a=t==="all"?C:C.filter(i=>i.status===t);return e!=="all"&&(a=a.filter(i=>i.channel===e)),n&&(a=a.filter(i=>K(i.seasonId).toLowerCase().includes(n)||(i.buyer||"").toLowerCase().includes(n)||(i.channel||"").toLowerCase().includes(n))),a}function Tt(){ma();let t=ha(),e=document.getElementById("outputTableBody");if(e){if(t.length===0){e.innerHTML=ht(9,"Ch\u01B0a c\xF3 d\u1EEF li\u1EC7u \u0111\u1EA7u ra ph\xF9 h\u1EE3p.");return}e.innerHTML=t.map(n=>`
     <tr>
-      <td><strong>${esc(seasonLabel(o.seasonId))}</strong></td>
-      <td>${esc(o.buyer)}</td>
-      <td>${esc(o.channel)}</td>
-      <td>${esc(o.volume)}</td>
-      <td>${o.price ? money(o.price) : '—'}</td>
-      <td>${outputRevenue(o) ? money(outputRevenue(o)) : '—'}</td>
-      <td>${esc(o.date)}</td>
-      <td>${outputStatusChip(o.status)}</td>
+      <td><strong>${r(K(n.seasonId))}</strong></td>
+      <td>${r(n.buyer)}</td>
+      <td>${r(n.channel)}</td>
+      <td>${r(n.volume)}</td>
+      <td>${n.price?_(n.price):"\u2014"}</td>
+      <td>${Mt(n)?_(Mt(n)):"\u2014"}</td>
+      <td>${r(n.date)}</td>
+      <td>${da(n.status)}</td>
       <td class="row-actions">
-        ${canManage(seasonRegion(o.seasonId)) ? `<button class="btn btn-sm" onclick="openOutputForm(${o.id})">Sửa</button>
-          <button class="btn btn-sm btn-danger" onclick="deleteOutput(${o.id})">Xóa</button>` : ''}
+        ${L(tt(n.seasonId))?`<button class="btn btn-sm" onclick="openOutputForm(${n.id})">S\u1EEDa</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteOutput(${n.id})">X\xF3a</button>`:""}
       </td>
-    </tr>`).join('');
-}
-
-function openOutputForm(id){
-  if(id && !canManage(seasonRegion(outputs.find(x => x.id === id)?.seasonId))){
-    toast('Bạn không có quyền sửa mục đầu ra này', 'warn');
-    return;
-  }
-  clearFieldErrors('outputOverlay');
-  document.getElementById('outputOverlay').classList.add('show');
-  const seasonSelect = document.getElementById('o_season');
-  const allowedSeasons = seasons.filter(s => canManage(s.region));
-  seasonSelect.innerHTML = allowedSeasons.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
-
-  if(id){
-    const o = outputs.find(x => x.id === id);
-    document.getElementById('outputFormTitle').textContent = 'Sửa đầu ra';
-    document.getElementById('o_editId').value = id;
-    seasonSelect.value = o.seasonId || '';
-    document.getElementById('o_buyer').value = o.buyer;
-    document.getElementById('o_channel').value = o.channel;
-    document.getElementById('o_volume').value = o.volume;
-    document.getElementById('o_price').value = o.price || '';
-    document.getElementById('o_date').value = o.date || '';
-    document.getElementById('o_status').value = o.status;
-    document.getElementById('o_note').value = o.note || '';
-  }else{
-    document.getElementById('outputFormTitle').textContent = 'Thêm đầu ra';
-    document.getElementById('o_editId').value = '';
-    ['o_buyer','o_volume','o_price','o_date','o_note'].forEach(k => document.getElementById(k).value = '');
-    document.getElementById('o_channel').value = 'Chợ đầu mối';
-    document.getElementById('o_status').value = 'negotiating';
-  }
-}
-
-function closeOutputForm(){
-  document.getElementById('outputOverlay').classList.remove('show');
-  clearFieldErrors('outputOverlay');
-}
-
-async function saveOutputForm(){
-  if(!isAdmin){
-    toast('Chỉ cán bộ nông nghiệp có quyền lưu thông tin đầu ra', 'warn');
-    return;
-  }
-  clearFieldErrors('outputOverlay');
-
-  const id = document.getElementById('o_editId').value;
-  const seasonIdVal = document.getElementById('o_season').value;
-  const buyerVal = document.getElementById('o_buyer').value.trim();
-  const volumeVal = document.getElementById('o_volume').value.trim();
-  const dateVal = document.getElementById('o_date').value;
-
-  let hasErr = false;
-  if(!seasonIdVal){
-    setFieldError('o_season', 'err_o_season', 'Vui lòng chọn mùa vụ liên quan.');
-    hasErr = true;
-  }
-  if(!buyerVal){
-    setFieldError('o_buyer', 'err_o_buyer', 'Vui lòng nhập tên đối tác thu mua.');
-    hasErr = true;
-  }
-  if(!volumeVal || Number(volumeVal) <= 0){
-    setFieldError('o_volume', 'err_o_volume', 'Sản lượng tiêu thụ phải lớn hơn 0.');
-    hasErr = true;
-  }
-  if(!dateVal){
-    setFieldError('o_date', 'err_o_date', 'Vui lòng chọn ngày giao hàng / ký hợp đồng.');
-    hasErr = true;
-  }
-  if(hasErr) return;
-
-  const record = {
-    seasonId: Number(seasonIdVal),
-    buyer: buyerVal,
-    channel: document.getElementById('o_channel').value,
-    volume: Number(volumeVal),
-    price: Number(document.getElementById('o_price').value || 0),
-    date: dateVal,
-    status: document.getElementById('o_status').value,
-    note: document.getElementById('o_note').value.trim()
-  };
-
-  if(!canManage(seasonRegion(record.seasonId))){
-    toast('Bạn không có quyền với mùa vụ này', 'warn');
-    return;
-  }
-
-  setBtnLoading('btnSaveOutput', true);
-  try{
-    if(id){
-      const idx = outputs.findIndex(x => x.id === Number(id));
-      outputs[idx] = { ...outputs[idx], ...record };
-    }else{
-      const newId = outputs.length ? Math.max(...outputs.map(x => x.id)) + 1 : 1;
-      outputs.push({ id: newId, ...record });
-    }
-    await saveOutputs();
-    await logActivity((id ? 'Cập nhật đầu ra: ' : 'Thêm đầu ra mới: ') + record.buyer + ' (' + seasonLabel(record.seasonId) + ') — bởi ' + currentUser.user);
-    closeOutputForm();
-    renderAll();
-    toast('Đã lưu thông tin đầu ra', 'ok');
-  }catch(e){
-    console.error(e);
-    toast('Lỗi khi lưu đầu ra: ' + e.message, 'warn');
-  }finally{
-    setBtnLoading('btnSaveOutput', false);
-  }
-}
-
-async function deleteOutput(id){
-  const o = outputs.find(x => x.id === id);
-  if(!canManage(seasonRegion(o?.seasonId))){
-    toast('Bạn không có quyền xóa mục đầu ra này', 'warn');
-    return;
-  }
-  const ok = await showConfirmDialog(
-    'Xóa mục đầu ra',
-    `Xóa thông tin giao dịch tiêu thụ với bên mua "${o?.buyer}"?`,
-    'Xóa giao dịch',
-    true
-  );
-  if(!ok) return;
-
-  outputs = outputs.filter(x => x.id !== id);
-  await saveOutputs();
-  await logActivity('Xóa đầu ra: ' + (o ? o.buyer : '') + ' — bởi ' + currentUser.user);
-  renderAll();
-  toast('Đã xóa mục đầu ra', 'warn');
-}
-
-/* ============ Tin thu mua nông sản ============ */
-function procurementImage(p){ return p.image || p.imageUrl || p.photo || p.photoUrl || p.thumbnail || (Array.isArray(p.images) && p.images[0]) || ''; }
-function procurementGroup(p){ const v = `${p.crop || ''} ${p.title || ''}`.toLowerCase(); return /rau|cải|xà lách|dưa leo/.test(v) ? 'vegetable' : /trái|quả|chôm|xoài|sơ ri|cam|ổi/.test(v) ? 'fruit' : 'general'; }
-function procurementVisual(p){ const image = procurementImage(p); const group = procurementGroup(p); return image ? `<img src="${esc(image)}" alt="${esc(p.crop || 'Nông sản')}" loading="lazy" decoding="async" onerror="this.parentElement.classList.add('is-placeholder');this.remove()">` : `<span class="proc-placeholder-icon">${group === 'vegetable' ? 'RAU XANH' : group === 'fruit' ? 'TRÁI CÂY' : 'NÔNG SẢN'}</span>`; }
-function procurementQuantity(p){ return p.quantity !== undefined && p.quantity !== null && p.quantity !== '' ? `${money(p.quantity)} ${esc(p.unitLabel || 'tấn')}` : 'Theo nhu cầu'; }
-function procurementPrice(p){ return Number(p.priceOffer) > 0 ? `${money(p.priceOffer)} đ/kg` : 'Giá thỏa thuận'; }
-function openProcDetail(id){ const p = procurements.find(x => x.id === id); if(!p) return; document.getElementById('procDetailContent').innerHTML = `<div class="proc-detail-grid"><div class="proc-detail-media proc-media-${procurementGroup(p)}">${procurementVisual(p)}</div><div class="proc-detail-summary">${procStatusChip(p.status)}<h2 id="procDetailTitle">${esc(p.title)}</h2><div class="proc-detail-quantity">${procurementQuantity(p)}<small>số lượng cần mua</small></div><strong class="proc-detail-price">${procurementPrice(p)}</strong><p>⌖ ${esc(p.ap || 'Bình Mỹ')}</p><p>▣ ${esc(p.buyer || 'Đối tác thu mua')}</p><button class="btn btn-primary" onclick="event.stopPropagation();closeProcDetail();openApplyForm(${p.id})" ${p.status === 'closed' ? 'disabled' : ''}>Liên hệ người mua</button></div></div><div class="proc-detail-info"><h3>Chi tiết nhu cầu</h3><p><b>Cây trồng:</b> ${esc(p.crop || '—')}</p><p><b>Khối lượng:</b> ${procurementQuantity(p)}</p><p><b>Giá chào mua:</b> ${procurementPrice(p)}</p>${p.deadline ? `<p><b>Cần hàng:</b> ${esc(p.deadline)}</p>` : ''}${p.requirement ? `<p><b>Yêu cầu chất lượng:</b> ${esc(p.requirement)}</p>` : ''}${p.note ? `<p><b>Ghi chú:</b> ${esc(p.note)}</p>` : ''}</div>`; document.getElementById('procDetailOverlay').classList.add('show'); }
-function closeProcDetail(){ document.getElementById('procDetailOverlay')?.classList.remove('show'); }
-
-function procStatusChip(s){
-  return s === 'open' ? '<span class="chip chip-open">Đang tuyển đầu mối</span>' : '<span class="chip chip-closed">Đã đủ nguồn hàng</span>';
-}
-
-function daysLeftLabel(deadline){
-  if(!deadline) return '';
-  const d = new Date(deadline + 'T00:00:00');
-  const now = new Date();
-  now.setHours(0,0,0,0);
-  const diff = Math.round((d - now) / 86400000);
-  if(diff < 0) return 'Đã hết hạn';
-  if(diff === 0) return 'Hạn chót hôm nay';
-  return 'Còn ' + diff + ' ngày';
-}
-
-function renderProcStats(){
-  const openCount = procurements.filter(p => p.status === 'open').length;
-  const totalApplicants = procurements.reduce((a, p) => a + (p.applicants || []).length, 0);
-  const cropSet = new Set(procurements.map(p => p.crop)).size;
-  const totalQuantity = procurements.filter(p => p.status === 'open').reduce((a, p) => a + Number(p.quantity || 0), 0);
-
-  const el = document.getElementById('procStats');
-  if(!el) return;
-  el.innerHTML = `
-    <div class="stat-card" style="--accent:var(--paddy)"><div class="num-face">${openCount}</div><div class="lbl">Tin đang mở chào hàng</div></div>
-    <div class="stat-card" style="--accent:var(--river)"><div class="num-face">${money(totalQuantity)}</div><div class="lbl">Tổng nhu cầu thu mua</div></div>
-    <div class="stat-card" style="--accent:var(--bloom)"><div class="num-face">${totalApplicants}</div><div class="lbl">Lượt hộ trồng chào hàng</div></div>
-    <div class="stat-card" style="--accent:var(--papaya)"><div class="num-face">${cropSet}</div><div class="lbl">Chủng loại nông sản cần</div></div>`;
-}
-
-function currentFilteredProcurements(){
-  const filterEl = document.getElementById('filterProcCrop');
-  if(filterEl){
-    const currentCrop = filterEl.value || 'all';
-    const crops = Array.from(new Set(procurements.map(p => p.crop))).sort();
-    filterEl.innerHTML = '<option value="all">Tất cả cây trồng</option>' + crops.map(c => `<option value="${esc(c)}" ${c === currentCrop ? 'selected' : ''}>${esc(c)}</option>`).join('');
-    if(!Array.from(filterEl.options).some(o => o.value === currentCrop)) filterEl.value = 'all';
-  }
-
-  const filter = document.getElementById('filterProcStatus')?.value || 'all';
-  const cropFilter = document.getElementById('filterProcCrop')?.value || 'all';
-  const q = (document.getElementById('searchProc')?.value || '').trim().toLowerCase();
-
-  let list = filter === 'all' ? procurements : procurements.filter(p => p.status === filter);
-  if(cropFilter !== 'all') list = list.filter(p => p.crop === cropFilter);
-  if(q){
-    list = list.filter(p =>
-      (p.title || '').toLowerCase().includes(q) ||
-      (p.crop || '').toLowerCase().includes(q) ||
-      (p.buyer || '').toLowerCase().includes(q) ||
-      (p.ap || '').toLowerCase().includes(q)
-    );
-  }
-  return [...list].sort((a, b) => (a.status === 'open' ? 0 : 1) - (b.status === 'open' ? 0 : 1) || (b.postedDate || '').localeCompare(a.postedDate || ''));
-}
-
-function renderProcurements(){
-  renderProcStats();
-  const list = currentFilteredProcurements();
-  const el = document.getElementById('procList');
-  if(!el) return;
-  renderProcurementCards(el, list);
-  return;
-  /* legacy list renderer retained below for compatibility */
-  if(list.length === 0){
-    el.innerHTML = `<div class="panel empty"><svg class="icon"><use href="#icon-sprout"/></svg>Chưa có tin thu mua phù hợp.</div>`;
-    return;
-  }
-  el.innerHTML = list.map(p => {
-    const canEdit = canManageProc(p);
-    const applicants = p.applicants || [];
-    return `
-    <div class="proc-card ${p.status === 'closed' ? 'closed' : ''}">
-      <div class="proc-top">
-        <div>
-          <p class="proc-title">${esc(p.title)}</p>
-          <p class="proc-buyer">${esc(p.buyer)}${p.postedDate ? ' · đăng ngày ' + esc(p.postedDate) : ''}</p>
-        </div>
-        <div class="proc-status">${procStatusChip(p.status)}</div>
-      </div>
-      <div class="proc-tags">
-        <span class="proc-tag accent-river"><svg class="icon" style="width:13px;height:13px;margin-right:3px;"><use href="#icon-seasons"/></svg>${esc(p.crop)}</span>
-        <span class="proc-tag accent-papaya">${esc(p.quantity)} ${esc(p.unitLabel || 'tấn')}</span>
-        ${p.priceOffer ? `<span class="proc-tag accent-bloom">${money(p.priceOffer)} đ/kg</span>` : `<span class="proc-tag">Giá thỏa thuận</span>`}
-        <span class="proc-tag">${esc(p.ap)}</span>
-        ${p.deadline ? `<span class="proc-tag">${esc(daysLeftLabel(p.deadline))} (đến ${esc(p.deadline)})</span>` : ''}
-      </div>
-      ${p.requirement ? `<div class="proc-req"><svg class="icon" style="width:14px;height:14px;"><use href="#icon-quality"/></svg>${esc(p.requirement)}</div>` : ''}
-      ${p.note ? `<div class="proc-note">${esc(p.note)}</div>` : ''}
-      <div class="proc-bottom">
-        <div class="proc-meta">Liên hệ: ${esc(p.contactName) || '—'}${p.contactPhone ? ' · ' + esc(p.contactPhone) : ''} · ${applicants.length} hộ đã gửi chào hàng</div>
-        <div class="proc-actions">
-          <button class="btn btn-primary btn-sm" onclick="openApplyForm(${p.id})" ${p.status === 'closed' ? 'disabled' : ''}>Gửi chào hàng</button>
-          ${applicants.length > 0 ? `<button class="btn btn-sm" onclick="toggleApplicants(${p.id})">Xem hộ chào hàng (${applicants.length})</button>` : ''}
-          ${canEdit ? `<button class="btn btn-sm" onclick="openProcForm(${p.id})">Sửa</button>
-            <button class="btn btn-sm" onclick="toggleProcStatus(${p.id})">${p.status === 'open' ? 'Đánh dấu đủ hàng' : 'Mở lại tin'}</button>
-            <button class="btn btn-sm btn-danger" onclick="deleteProcurement(${p.id})">Xóa</button>` : ''}
-        </div>
-      </div>
-      <div class="applicants-box" id="applicants-${p.id}">
-        ${applicants.map(a => `<div class="applicant-item"><strong>${esc(a.name)}</strong> · SĐT: ${esc(a.phone) || '—'} ${a.ap ? '· Ấp: ' + esc(a.ap) : ''}${a.quantity ? ' · Cung cấp: ' + esc(a.quantity) : ''}${a.note ? ' · ' + esc(a.note) : ''}</div>`).join('') || ''}
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function renderProcurementCards(el, list){
-  if(list.length === 0){ el.innerHTML = `<div class="proc-empty"><svg class="icon"><use href="#icon-sprout"/></svg><h3>Chưa có tin thu mua phù hợp</h3><p>Thử đổi bộ lọc hoặc tìm một nhu cầu khác.</p><button class="btn" onclick="document.getElementById('searchProc').value='';document.getElementById('filterProcStatus').value='all';document.getElementById('filterProcCrop').value='all';renderProcurements()">Xóa bộ lọc</button></div>`; return; }
-  el.innerHTML = list.map(p => { const canEdit = canManageProc(p); return `<article class="proc-card ${p.status === 'closed' ? 'closed' : ''}" onclick="openProcDetail(${p.id})" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' ')openProcDetail(${p.id})"><div class="proc-card-media proc-media-${procurementGroup(p)}">${procurementVisual(p)}<div class="proc-status">${procStatusChip(p.status)}</div></div><div class="proc-card-body"><p class="proc-title">${esc(p.title)}</p><div class="proc-quantity"><small>NHU CẦU</small><strong>${procurementQuantity(p)}</strong><span>số lượng cần mua</span></div><div class="proc-price">${procurementPrice(p)}</div><div class="proc-location">⌖ ${esc(p.ap || 'Bình Mỹ')} <span>·</span> ${esc(p.buyer || 'Đối tác thu mua')}</div>${p.deadline ? `<div class="proc-deadline">${esc(daysLeftLabel(p.deadline))}</div>` : ''}<div class="proc-actions"><button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openApplyForm(${p.id})" ${p.status === 'closed' ? 'disabled' : ''}>Liên hệ người mua</button><button class="btn btn-sm" onclick="event.stopPropagation();openProcDetail(${p.id})">Xem chi tiết</button>${canEdit ? `<button class="btn btn-sm" onclick="event.stopPropagation();openProcForm(${p.id})">Sửa</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteProcurement(${p.id})">Xóa</button>` : ''}</div></div></article>`; }).join('');
-}
-
-function toggleApplicants(id){
-  const box = document.getElementById('applicants-' + id);
-  if(box) box.classList.toggle('show');
-}
-
-function openProcForm(id){
-  if(id && !canManageProc(procurements.find(x => x.id === id))){
-    toast('Bạn không có quyền sửa tin thu mua này', 'warn');
-    return;
-  }
-  clearFieldErrors('procOverlay');
-  document.getElementById('procOverlay').classList.add('show');
-  if(id){
-    const p = procurements.find(x => x.id === id);
-    document.getElementById('procFormTitle').textContent = 'Sửa tin thu mua';
-    document.getElementById('p_editId').value = id;
-    document.getElementById('p_title').value = p.title;
-    document.getElementById('p_buyer').value = p.buyer;
-    document.getElementById('p_crop').value = p.crop;
-    document.getElementById('p_ap').value = p.ap;
-    document.getElementById('p_quantity').value = p.quantity;
-    document.getElementById('p_unitLabel').value = p.unitLabel || '';
-    document.getElementById('p_priceOffer').value = p.priceOffer || '';
-    document.getElementById('p_requirement').value = p.requirement || '';
-    document.getElementById('p_deadline').value = p.deadline || '';
-    document.getElementById('p_contactName').value = p.contactName || '';
-    document.getElementById('p_contactPhone').value = p.contactPhone || '';
-    document.getElementById('p_note').value = p.note || '';
-    document.getElementById('p_status').value = p.status;
-  }else{
-    document.getElementById('procFormTitle').textContent = 'Đăng tin thu mua';
-    document.getElementById('p_editId').value = '';
-    ['p_title','p_buyer','p_crop','p_ap','p_quantity','p_unitLabel','p_priceOffer','p_requirement','p_deadline','p_contactName','p_contactPhone','p_note'].forEach(k => document.getElementById(k).value = '');
-    document.getElementById('p_status').value = 'open';
-    if(currentUser && currentUser.role === 'ward') document.getElementById('p_ap').value = currentUser.ap;
-    if(currentPersonUser && currentPersonUser.role === 'buyer'){
-      document.getElementById('p_buyer').value = currentPersonUser.displayName;
-      document.getElementById('p_contactName').value = currentPersonUser.displayName;
-      document.getElementById('p_contactPhone').value = currentPersonUser.phone || '';
-    }
-  }
-}
-
-function closeProcForm(){
-  document.getElementById('procOverlay').classList.remove('show');
-  clearFieldErrors('procOverlay');
-}
-
-async function saveProcForm(){
-  clearFieldErrors('procOverlay');
-  const id = document.getElementById('p_editId').value;
-  const titleVal = document.getElementById('p_title').value.trim();
-  const buyerVal = document.getElementById('p_buyer').value.trim();
-  const cropVal = document.getElementById('p_crop').value.trim();
-  const quantityVal = document.getElementById('p_quantity').value.trim();
-
-  let hasErr = false;
-  if(!titleVal){
-    setFieldError('p_title', 'err_p_title', 'Vui lòng nhập tiêu đề tin thu mua.');
-    hasErr = true;
-  }
-  if(!buyerVal){
-    setFieldError('p_buyer', 'err_p_buyer', 'Vui lòng nhập tên đối tác thu mua.');
-    hasErr = true;
-  }
-  if(!cropVal){
-    setFieldError('p_crop', 'err_p_crop', 'Vui lòng nhập loại nông sản cần.');
-    hasErr = true;
-  }
-  if(!quantityVal || Number(quantityVal) <= 0){
-    setFieldError('p_quantity', 'err_p_quantity', 'Số lượng cần thu mua phải lớn hơn 0.');
-    hasErr = true;
-  }
-  if(hasErr) return;
-
-  const record = {
-    title: titleVal,
-    buyer: buyerVal,
-    crop: cropVal,
-    ap: document.getElementById('p_ap').value.trim() || 'Toàn xã Bình Mỹ',
-    quantity: Number(quantityVal),
-    unitLabel: document.getElementById('p_unitLabel').value.trim() || 'tấn',
-    priceOffer: Number(document.getElementById('p_priceOffer').value || 0),
-    requirement: document.getElementById('p_requirement').value.trim(),
-    deadline: document.getElementById('p_deadline').value,
-    contactName: document.getElementById('p_contactName').value.trim(),
-    contactPhone: document.getElementById('p_contactPhone').value.trim(),
-    note: document.getElementById('p_note').value.trim(),
-    status: document.getElementById('p_status').value
-  };
-
-  setBtnLoading('btnSaveProc', true);
-  try{
-    if(id){
-      const idx = procurements.findIndex(x => x.id === Number(id));
-      procurements[idx] = { ...procurements[idx], ...record };
-    }else{
-      const newId = procurements.length ? Math.max(...procurements.map(x => x.id)) + 1 : 1;
-      const ownerUsername = (currentPersonUser && currentPersonUser.role === 'buyer') ? currentPersonUser.username : (currentUser ? currentUser.user : 'admin');
-      procurements.push({
-        id: newId,
-        postedDate: new Date().toISOString().slice(0, 10),
-        applicants: [],
-        ownerUsername,
-        ...record
-      });
-    }
-    await saveProcurements();
-    await logActivity((id ? 'Cập nhật tin thu mua: ' : 'Đăng tin thu mua mới: ') + record.title + ' — bởi ' + actorLabel());
-    closeProcForm();
-    renderAll();
-    toast('Đã lưu tin thu mua thành công', 'ok');
-  }catch(e){
-    console.error(e);
-    toast('Lỗi khi lưu tin: ' + e.message, 'warn');
-  }finally{
-    setBtnLoading('btnSaveProc', false);
-  }
-}
-
-async function toggleProcStatus(id){
-  const p = procurements.find(x => x.id === id);
-  if(!p || !canManageProc(p)){
-    toast('Bạn không có quyền thay đổi tin này', 'warn');
-    return;
-  }
-  p.status = p.status === 'open' ? 'closed' : 'open';
-  await saveProcurements();
-  await logActivity((p.status === 'closed' ? 'Đóng tin thu mua: ' : 'Mở lại tin thu mua: ') + p.title + ' — bởi ' + actorLabel());
-  renderAll();
-  toast('Đã cập nhật trạng thái tin', 'ok');
-}
-
-async function deleteProcurement(id){
-  const p = procurements.find(x => x.id === id);
-  if(!p || !canManageProc(p)){
-    toast('Bạn không có quyền xóa tin này', 'warn');
-    return;
-  }
-  const ok = await showConfirmDialog(
-    'Xóa tin thu mua',
-    `Xóa tin thu mua "${p?.title}" cùng toàn bộ danh sách chào hàng liên quan?`,
-    'Xóa tin',
-    true
-  );
-  if(!ok) return;
-
-  procurements = procurements.filter(x => x.id !== id);
-  await saveProcurements();
-  await logActivity('Xóa tin thu mua: ' + (p ? p.title : '') + ' — bởi ' + actorLabel());
-  renderAll();
-  toast('Đã xóa tin thu mua', 'warn');
-}
-
-function openApplyForm(id){
-  const p = procurements.find(x => x.id === id);
-  if(!p) return;
-  clearFieldErrors('applyOverlay');
-  document.getElementById('ap_procId').value = id;
-  document.getElementById('applyForTitle').textContent = 'Gửi thông tin chào hàng cho: "' + p.title + '" — ' + p.buyer;
-  ['ap_name','ap_phone','ap_ap','ap_quantity','ap_note'].forEach(fid => document.getElementById(fid).value = '');
-  if(currentUser && currentUser.role === 'ward') document.getElementById('ap_ap').value = currentUser.ap;
-  if(currentPersonUser && currentPersonUser.role === 'grower'){
-    document.getElementById('ap_name').value = currentPersonUser.displayName;
-    document.getElementById('ap_phone').value = currentPersonUser.phone || '';
-    document.getElementById('ap_ap').value = currentPersonUser.ap || '';
-  }
-  document.getElementById('applyOverlay').classList.add('show');
-}
-
-function closeApplyForm(){
-  document.getElementById('applyOverlay').classList.remove('show');
-  clearFieldErrors('applyOverlay');
-}
-
-async function submitApplication(){
-  clearFieldErrors('applyOverlay');
-  const id = Number(document.getElementById('ap_procId').value);
-  const name = document.getElementById('ap_name').value.trim();
-  const phone = document.getElementById('ap_phone').value.trim();
-
-  let hasErr = false;
-  if(!name){
-    setFieldError('ap_name', 'err_ap_name', 'Vui lòng nhập tên người liên hệ.');
-    hasErr = true;
-  }
-  if(!phone || !/^[0-9+\s\-()]{8,15}$/.test(phone)){
-    setFieldError('ap_phone', 'err_ap_phone', 'Vui lòng nhập số điện thoại hợp lệ.');
-    hasErr = true;
-  }
-  if(hasErr) return;
-
-  const payload = {
-    procId: id,
-    name,
-    phone,
-    ap: document.getElementById('ap_ap').value.trim(),
-    quantity: document.getElementById('ap_quantity').value.trim(),
-    note: document.getElementById('ap_note').value.trim()
-  };
-
-  setBtnLoading('btnSubmitApply', true);
-  try{
-    try{
-      await httpsCallable(functions, 'submitProcurementApplication')(payload);
-    }catch(cfErr){
-      // Chế độ dự phòng khi backend Cloud Function chưa cấu hình
-      const targetProc = procurements.find(p => p.id === id);
-      if(targetProc){
-        if(!targetProc.applicants) targetProc.applicants = [];
-        targetProc.applicants.push({
-          name: payload.name,
-          phone: payload.phone,
-          ap: payload.ap,
-          quantity: payload.quantity,
-          note: payload.note,
-          appliedAt: new Date().toISOString()
-        });
-        await saveProcurements();
-      }
-    }
-    closeApplyForm();
-    renderAll();
-    toast('Đã gửi thông tin chào hàng, đối tác sẽ liên hệ với bạn', 'ok');
-  }catch(e){
-    console.error('Lỗi gửi chào hàng:', e);
-    toast('Không gửi được, vui lòng thử lại: ' + (e.message || ''), 'warn');
-  }finally{
-    setBtnLoading('btnSubmitApply', false);
-  }
-}
-
-/* ============ Chợ nông sản Bình Mỹ (Sản phẩm đang bán & Truy xuất QR) ============ */
-function certChipProduct(cert){
-  if(cert === 'VietGAP') return '<span class="chip chip-pass">VietGAP</span>';
-  if(cert === 'Xuất khẩu (GlobalGAP)') return '<span class="chip" style="background:var(--bloom-tint);color:var(--bloom-deep);">Xuất khẩu (GlobalGAP)</span>';
-  return '<span class="chip" style="background:#EEE;color:var(--ink-faint);">Chưa có chứng nhận</span>';
-}
-
-function productStatusChip(s){
-  return s === 'available' ? '<span class="chip chip-open">✅ Còn hàng</span>' : '<span class="chip chip-closed">ℹ️ Hết hàng</span>';
-}
-
-function getProductImage(p){
-  if(!p) return '';
-  if(typeof p.image === 'string' && p.image.trim()) return p.image.trim();
-  if(typeof p.imageUrl === 'string' && p.imageUrl.trim()) return p.imageUrl.trim();
-  if(typeof p.photoUrl === 'string' && p.photoUrl.trim()) return p.photoUrl.trim();
-  if(typeof p.photo === 'string' && p.photo.trim()) return p.photo.trim();
-  if(typeof p.thumbnail === 'string' && p.thumbnail.trim()) return p.thumbnail.trim();
-  if(Array.isArray(p.images) && p.images.length > 0 && typeof p.images[0] === 'string' && p.images[0].trim()) return p.images[0].trim();
-  return '';
-}
-
-function getProductImages(p){
-  if(!p) return [];
-  const list = [];
-  if(Array.isArray(p.images)){
-    p.images.forEach(img => {
-      if(typeof img === 'string' && img.trim() && !list.includes(img.trim())) list.push(img.trim());
-    });
-  }
-  ['image', 'imageUrl', 'photoUrl', 'photo', 'thumbnail'].forEach(key => {
-    if(typeof p[key] === 'string' && p[key].trim() && !list.includes(p[key].trim())){
-      list.push(p[key].trim());
-    }
-  });
-  return list;
-}
-
-// Đối chiếu sản phẩm với kết quả kiểm định thực tế trong cơ sở dữ liệu
-function getProductQualityTests(p){
-  if(!p) return [];
-  const pName = removeVietnameseTones(p.name);
-  const pBatch = removeVietnameseTones(p.batchCode || '');
-  const pCode = removeVietnameseTones(p.productCode || '');
-  return qualityTests.filter(q => {
-    const season = seasons.find(s => s.id === Number(q.seasonId));
-    const sName = season ? removeVietnameseTones(season.name) : '';
-    const sCrop = season ? removeVietnameseTones(season.crop) : '';
-    return (sName && pName && (sName.includes(pName) || pName.includes(sName))) ||
-           (sCrop && pName && (sCrop.includes(pName) || pName.includes(sCrop))) ||
-           (pBatch && sName && sName.includes(pBatch)) ||
-           (pCode && sName && sName.includes(pCode));
-  });
-}
-
-function renderProductStats(){
-  const availableCount = products.filter(p => p.status === 'available').length;
-  const certCount = products.filter(p => p.certification && p.certification !== 'Chưa kiểm định' && p.certification !== 'Chưa có chứng nhận').length;
-  const qrCount = products.filter(p => p.productCode || p.qrCode).length;
-  const buyerCount = products.reduce((a, p) => a + (p.buyRequests || []).length, 0);
-
-  const el = document.getElementById('productStats');
-  if(!el) return;
-  el.innerHTML = `
-    <div class="stat-card" style="--accent:var(--paddy)"><div class="num-face">${availableCount}</div><div class="lbl">Sản phẩm đang bán</div></div>
-    <div class="stat-card" style="--accent:var(--river)"><div class="num-face">${certCount}</div><div class="lbl">Sản phẩm có chứng nhận</div></div>
-    <div class="stat-card" style="--accent:var(--bloom)"><div class="num-face">${qrCount}</div><div class="lbl">Mã QR truy xuất sẵn sàng</div></div>
-    <div class="stat-card" style="--accent:var(--papaya)"><div class="num-face">${buyerCount}</div><div class="lbl">Lượt khách liên hệ mua</div></div>`;
-}
-
-let mobileActiveFilter = 'all';
-
-function renderMobileHomeStats(){
-  const mStatProducts = document.getElementById('mStatProducts');
-  const mStatTested = document.getElementById('mStatTested');
-  const mStatAvailable = document.getElementById('mStatAvailable');
-  
-  const totalCount = products.length;
-  const availableCount = products.filter(p => p.status === 'available').length;
-  const testedCount = products.filter(p => (p.certification && p.certification !== 'Chưa kiểm định' && p.certification !== 'Chưa có chứng nhận') || getProductQualityTests(p).length > 0).length;
-
-  if(mStatProducts) mStatProducts.textContent = totalCount;
-  if(mStatTested) mStatTested.textContent = testedCount;
-  if(mStatAvailable) mStatAvailable.textContent = availableCount;
-}
-
-function clearMobileSearch(){
-  const inp = document.getElementById('mobileSearchInput');
-  if(inp){
-    inp.value = '';
-    const clearBtn = document.getElementById('mobileSearchClear');
-    if(clearBtn) clearBtn.style.display = 'none';
-    renderProducts();
-  }
-}
-
-function clearAllProductFilters(){
-  const search = document.getElementById('searchProduct');
-  if(search) search.value = '';
-  const mSearch = document.getElementById('mobileSearchInput');
-  if(mSearch) mSearch.value = '';
-  const clearBtn = document.getElementById('mobileSearchClear');
-  if(clearBtn) clearBtn.style.display = 'none';
-
-  ['filterProductName', 'filterProductStatus', 'filterProductQuality', 'filterProductCert'].forEach(id => {
-    const el = document.getElementById(id);
-    if(el) el.value = 'all';
-  });
-
-  const chips = document.getElementById('mobileFilterChips');
-  if(chips){
-    chips.querySelectorAll('.m-chip').forEach(c => c.classList.remove('active'));
-    chips.querySelector('.m-chip[data-filter="all"]')?.classList.add('active');
-  }
-  mobileActiveFilter = 'all';
-  renderProducts();
-}
-
-function setupMobileFilterChips(){
-  const container = document.getElementById('mobileFilterChips');
-  if(!container || container.dataset.initialized) return;
-  container.dataset.initialized = 'true';
-  container.addEventListener('click', (e) => {
-    const btn = e.target.closest('.m-chip');
-    if(!btn) return;
-    container.querySelectorAll('.m-chip').forEach(c => c.classList.remove('active'));
-    btn.classList.add('active');
-    mobileActiveFilter = btn.dataset.filter || 'all';
-    renderProducts();
-  });
-}
-
-function currentFilteredProducts(){
-  const nameFilterEl = document.getElementById('filterProductName');
-  if(nameFilterEl){
-    const currentName = nameFilterEl.value || 'all';
-    const names = Array.from(new Set(products.map(p => p.name).filter(Boolean))).sort();
-    nameFilterEl.innerHTML = '<option value="all">Tất cả loại nông sản</option>' + names.map(n => `<option value="${esc(n)}" ${n === currentName ? 'selected' : ''}>${esc(n)}</option>`).join('');
-    if(!Array.from(nameFilterEl.options).some(o => o.value === currentName)) nameFilterEl.value = 'all';
-  }
-
-  const nameFilter = document.getElementById('filterProductName')?.value || 'all';
-  const statusFilter = document.getElementById('filterProductStatus')?.value || 'all';
-  const qualityFilter = document.getElementById('filterProductQuality')?.value || 'all';
-  const certFilter = document.getElementById('filterProductCert')?.value || 'all';
-  
-  const desktopSearch = (document.getElementById('searchProduct')?.value || '').trim();
-  const mobileSearch = (document.getElementById('mobileSearchInput')?.value || '').trim();
-  const rawQ = mobileSearch || desktopSearch;
-  const qNorm = removeVietnameseTones(rawQ);
-
-  let list = [...products];
-  if(nameFilter !== 'all') list = list.filter(p => p.name === nameFilter);
-  if(statusFilter !== 'all') list = list.filter(p => p.status === statusFilter);
-  
-  if(qualityFilter === 'tested'){
-    list = list.filter(p => (p.certification && p.certification !== 'Chưa kiểm định' && p.certification !== 'Chưa có chứng nhận') || getProductQualityTests(p).length > 0);
-  }else if(qualityFilter === 'untested'){
-    list = list.filter(p => (!p.certification || p.certification === 'Chưa kiểm định' || p.certification === 'Chưa có chứng nhận') && getProductQualityTests(p).length === 0);
-  }
-
-  if(certFilter !== 'all'){
-    if(certFilter === 'Chưa kiểm định'){
-      list = list.filter(p => !p.certification || p.certification === 'Chưa kiểm định' || p.certification === 'Chưa có chứng nhận');
-    }else{
-      list = list.filter(p => p.certification === certFilter);
-    }
-  }
-
-  // Bộ lọc chip dành riêng cho Mobile
-  if(mobileActiveFilter === 'available'){
-    list = list.filter(p => p.status === 'available');
-  }else if(mobileActiveFilter === 'tested'){
-    list = list.filter(p => (p.certification && p.certification !== 'Chưa kiểm định' && p.certification !== 'Chưa có chứng nhận') || getProductQualityTests(p).length > 0);
-  }else if(mobileActiveFilter === 'VietGAP'){
-    list = list.filter(p => (p.certification || '').includes('VietGAP'));
-  }else if(mobileActiveFilter === 'ap-bonphu'){
-    list = list.filter(p => {
-      const ap = removeVietnameseTones(p.ap || '');
-      return ap.includes('bon phu');
-    });
-  }else if(mobileActiveFilter === 'ap-anhoa'){
-    list = list.filter(p => {
-      const ap = removeVietnameseTones(p.ap || '');
-      return ap.includes('an hoa');
-    });
-  }
-
-  if(qNorm){
-    list = list.filter(p => {
-      const name = removeVietnameseTones(p.name);
-      const seller = removeVietnameseTones(p.sellerName);
-      const ap = removeVietnameseTones(p.ap);
-      const code = removeVietnameseTones(p.productCode);
-      const batch = removeVietnameseTones(p.batchCode);
-      const qr = removeVietnameseTones(p.qrCode);
-      const cert = removeVietnameseTones(p.certification);
-      return name.includes(qNorm) || seller.includes(qNorm) || ap.includes(qNorm) ||
-             code.includes(qNorm) || batch.includes(qNorm) || qr.includes(qNorm) || cert.includes(qNorm);
-    });
-  }
-
-  return list.sort((a, b) => (a.status === 'available' ? 0 : 1) - (b.status === 'available' ? 0 : 1) || (b.postedDate || '').localeCompare(a.postedDate || ''));
-}
-
-function renderProducts(){
-  renderProductStats();
-  renderMobileHomeStats();
-  setupMobileFilterChips();
-  
-  const list = currentFilteredProducts();
-  const gridContainer = document.getElementById('productMarketplaceGrid') || document.getElementById('mobileProductCards');
-  const desktopTableBody = document.getElementById('desktopProductTableBody');
-  const mobileCards = document.getElementById('mobileProductCards');
-  const homePreviewEl = document.getElementById('mobileHomeProductPreview');
-  const countLabel = document.getElementById('mobileProductCountLabel');
-  const desktopCountLabel = document.getElementById('desktopProductCountLabel');
-
-  const availableCount = products.filter(p => p.status === 'available').length;
-  const countText = `Hiển thị ${list.length} nông sản (${availableCount} đang bán)`;
-  if(countLabel) countLabel.textContent = countText;
-  if(desktopCountLabel) desktopCountLabel.textContent = countText;
-
-  // 1. Render Mobile Home Preview (Top 3 nông sản mới nhất trên Trang chủ Mobile)
-  if(homePreviewEl){
-    const previewItems = products.filter(p => p.status === 'available').slice(0, 3);
-    if(previewItems.length === 0){
-      homePreviewEl.innerHTML = '<div style="text-align:center;color:var(--ink-soft);padding:14px;background:var(--surface);border-radius:12px;font-size:13px;">Chưa có nông sản mới. Bà con có thể đăng bán ngay!</div>';
-    } else {
-      homePreviewEl.innerHTML = previewItems.map(p => {
-        const img = getProductImage(p);
-        return `
-          <div class="mobile-action-card mobile-home-prod-card" onclick="showProductDetail(${p.id})" style="cursor:pointer;">
+    </tr>`).join("")}}function pa(t){if(t&&!L(tt(C.find(a=>a.id===t)?.seasonId))){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n s\u1EEDa m\u1EE5c \u0111\u1EA7u ra n\xE0y","warn");return}w("outputOverlay"),document.getElementById("outputOverlay").classList.add("show"),O(document.getElementById("outputOverlay"));let e=document.getElementById("o_season"),n=y.filter(a=>L(a.region));if(e.innerHTML=n.map(a=>`<option value="${a.id}">${r(a.name)}</option>`).join(""),t){let a=C.find(i=>i.id===t);document.getElementById("outputFormTitle").textContent="S\u1EEDa \u0111\u1EA7u ra",document.getElementById("o_editId").value=t,e.value=a.seasonId||"",document.getElementById("o_buyer").value=a.buyer,document.getElementById("o_channel").value=a.channel,document.getElementById("o_volume").value=a.volume,document.getElementById("o_price").value=a.price||"",document.getElementById("o_date").value=a.date||"",document.getElementById("o_status").value=a.status,document.getElementById("o_note").value=a.note||""}else document.getElementById("outputFormTitle").textContent="Th\xEAm \u0111\u1EA7u ra",document.getElementById("o_editId").value="",["o_buyer","o_volume","o_price","o_date","o_note"].forEach(a=>document.getElementById(a).value=""),document.getElementById("o_channel").value="Ch\u1EE3 \u0111\u1EA7u m\u1ED1i",document.getElementById("o_status").value="negotiating"}function Fe(){document.getElementById("outputOverlay").classList.remove("show"),w("outputOverlay"),M()}async function ga(){if(!S){m("Ch\u1EC9 c\xE1n b\u1ED9 n\xF4ng nghi\u1EC7p c\xF3 quy\u1EC1n l\u01B0u th\xF4ng tin \u0111\u1EA7u ra","warn");return}w("outputOverlay");let t=document.getElementById("o_editId").value,e=document.getElementById("o_season").value,n=document.getElementById("o_buyer").value.trim(),a=document.getElementById("o_volume").value.trim(),i=document.getElementById("o_date").value,o=!1;if(e||(b("o_season","err_o_season","Vui l\xF2ng ch\u1ECDn m\xF9a v\u1EE5 li\xEAn quan."),o=!0),n||(b("o_buyer","err_o_buyer","Vui l\xF2ng nh\u1EADp t\xEAn \u0111\u1ED1i t\xE1c thu mua."),o=!0),(!a||Number(a)<=0)&&(b("o_volume","err_o_volume","S\u1EA3n l\u01B0\u1EE3ng ti\xEAu th\u1EE5 ph\u1EA3i l\u1EDBn h\u01A1n 0."),o=!0),i||(b("o_date","err_o_date","Vui l\xF2ng ch\u1ECDn ng\xE0y giao h\xE0ng / k\xFD h\u1EE3p \u0111\u1ED3ng."),o=!0),o)return;let c={seasonId:Number(e),buyer:n,channel:document.getElementById("o_channel").value,volume:Number(a),price:Number(document.getElementById("o_price").value||0),date:i,status:document.getElementById("o_status").value,note:document.getElementById("o_note").value.trim()};if(!L(tt(c.seasonId))){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n v\u1EDBi m\xF9a v\u1EE5 n\xE0y","warn");return}$("btnSaveOutput",!0);try{if(t){let s=C.findIndex(u=>u.id===Number(t));C[s]={...C[s],...c}}else{let s=C.length?Math.max(...C.map(u=>u.id))+1:1;C.push({id:s,...c})}await le(),await T((t?"C\u1EADp nh\u1EADt \u0111\u1EA7u ra: ":"Th\xEAm \u0111\u1EA7u ra m\u1EDBi: ")+c.buyer+" ("+K(c.seasonId)+") \u2014 b\u1EDFi "+h.user),Fe(),B(),m("\u0110\xE3 l\u01B0u th\xF4ng tin \u0111\u1EA7u ra","ok")}catch(s){console.error(s),m("L\u1ED7i khi l\u01B0u \u0111\u1EA7u ra: "+s.message,"warn")}finally{$("btnSaveOutput",!1)}}async function ya(t){let e=C.find(a=>a.id===t);if(!L(tt(e?.seasonId))){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n x\xF3a m\u1EE5c \u0111\u1EA7u ra n\xE0y","warn");return}await J("X\xF3a m\u1EE5c \u0111\u1EA7u ra",`X\xF3a th\xF4ng tin giao d\u1ECBch ti\xEAu th\u1EE5 v\u1EDBi b\xEAn mua "${e?.buyer}"?`,"X\xF3a giao d\u1ECBch",!0)&&(C=C.filter(a=>a.id!==t),await le(),await T("X\xF3a \u0111\u1EA7u ra: "+(e?e.buyer:"")+" \u2014 b\u1EDFi "+h.user),B(),m("\u0110\xE3 x\xF3a m\u1EE5c \u0111\u1EA7u ra","warn"))}function va(t){return t.image||t.imageUrl||t.photo||t.photoUrl||t.thumbnail||Array.isArray(t.images)&&t.images[0]||""}function de(t){let e=`${t.crop||""} ${t.title||""}`.toLowerCase();return/rau|cải|xà lách|dưa leo/.test(e)?"vegetable":/trái|quả|chôm|xoài|sơ ri|cam|ổi/.test(e)?"fruit":"general"}function Ve(t){let e=va(t),n=de(t);return e?`<img src="${r(e)}" alt="${r(t.crop||"N\xF4ng s\u1EA3n")}" loading="lazy" decoding="async" onerror="this.parentElement.classList.add('is-placeholder');this.remove()">`:`<span class="proc-placeholder-icon">${n==="vegetable"?"RAU XANH":n==="fruit"?"TR\xC1I C\xC2Y":"N\xD4NG S\u1EA2N"}</span>`}function Jt(t){return t.quantity!==void 0&&t.quantity!==null&&t.quantity!==""?`${_(t.quantity)} ${r(t.unitLabel||"t\u1EA5n")}`:"Theo nhu c\u1EA7u"}function Zt(t){return Number(t.priceOffer)>0?`${_(t.priceOffer)} \u0111/kg`:"Gi\xE1 th\u1ECFa thu\u1EADn"}function fa(t){let e=E.find(n=>n.id===t);e&&(document.getElementById("procDetailContent").innerHTML=`<div class="proc-detail-grid"><div class="proc-detail-media proc-media-${de(e)}">${Ve(e)}</div><div class="proc-detail-summary">${me(e.status)}<h2 id="procDetailTitle">${r(e.title)}</h2><div class="proc-detail-quantity">${Jt(e)}<small>s\u1ED1 l\u01B0\u1EE3ng c\u1EA7n mua</small></div><strong class="proc-detail-price">${Zt(e)}</strong><p>\u2316 ${r(e.ap||"B\xECnh M\u1EF9")}</p><p>\u25A3 ${r(e.buyer||"\u0110\u1ED1i t\xE1c thu mua")}</p><button class="btn btn-primary" onclick="event.stopPropagation();closeProcDetail();openApplyForm(${e.id})" ${e.status==="closed"?"disabled":""}>Li\xEAn h\u1EC7 ng\u01B0\u1EDDi mua</button></div></div><div class="proc-detail-info"><h3>Chi ti\u1EBFt nhu c\u1EA7u</h3><p><b>C\xE2y tr\u1ED3ng:</b> ${r(e.crop||"\u2014")}</p><p><b>Kh\u1ED1i l\u01B0\u1EE3ng:</b> ${Jt(e)}</p><p><b>Gi\xE1 ch\xE0o mua:</b> ${Zt(e)}</p>${e.deadline?`<p><b>C\u1EA7n h\xE0ng:</b> ${r(e.deadline)}</p>`:""}${e.requirement?`<p><b>Y\xEAu c\u1EA7u ch\u1EA5t l\u01B0\u1EE3ng:</b> ${r(e.requirement)}</p>`:""}${e.note?`<p><b>Ghi ch\xFA:</b> ${r(e.note)}</p>`:""}</div>`,document.getElementById("procDetailOverlay").classList.add("show"))}function ba(){document.getElementById("procDetailOverlay")?.classList.remove("show")}function me(t){return t==="open"?'<span class="chip chip-open">\u0110ang tuy\u1EC3n \u0111\u1EA7u m\u1ED1i</span>':'<span class="chip chip-closed">\u0110\xE3 \u0111\u1EE7 ngu\u1ED3n h\xE0ng</span>'}function Re(t){if(!t)return"";let e=new Date(t+"T00:00:00"),n=new Date;n.setHours(0,0,0,0);let a=Math.round((e-n)/864e5);return a<0?"\u0110\xE3 h\u1EBFt h\u1EA1n":a===0?"H\u1EA1n ch\xF3t h\xF4m nay":"C\xF2n "+a+" ng\xE0y"}function Ia(){let t=E.filter(o=>o.status==="open").length,e=E.reduce((o,c)=>o+(c.applicants||[]).length,0),n=new Set(E.map(o=>o.crop)).size,a=E.filter(o=>o.status==="open").reduce((o,c)=>o+Number(c.quantity||0),0),i=document.getElementById("procStats");i&&(i.innerHTML=`
+    <div class="stat-card" style="--accent:var(--paddy)"><div class="num-face">${t}</div><div class="lbl">Tin \u0111ang m\u1EDF ch\xE0o h\xE0ng</div></div>
+    <div class="stat-card" style="--accent:var(--river)"><div class="num-face">${_(a)}</div><div class="lbl">T\u1ED5ng nhu c\u1EA7u thu mua</div></div>
+    <div class="stat-card" style="--accent:var(--bloom)"><div class="num-face">${e}</div><div class="lbl">L\u01B0\u1EE3t h\u1ED9 tr\u1ED3ng ch\xE0o h\xE0ng</div></div>
+    <div class="stat-card" style="--accent:var(--papaya)"><div class="num-face">${n}</div><div class="lbl">Ch\u1EE7ng lo\u1EA1i n\xF4ng s\u1EA3n c\u1EA7n</div></div>`)}function Ea(){let t=document.getElementById("filterProcCrop");if(t){let o=t.value||"all",c=Array.from(new Set(E.map(s=>s.crop))).sort();t.innerHTML='<option value="all">T\u1EA5t c\u1EA3 c\xE2y tr\u1ED3ng</option>'+c.map(s=>`<option value="${r(s)}" ${s===o?"selected":""}>${r(s)}</option>`).join(""),Array.from(t.options).some(s=>s.value===o)||(t.value="all")}let e=document.getElementById("filterProcStatus")?.value||"all",n=document.getElementById("filterProcCrop")?.value||"all",a=(document.getElementById("searchProc")?.value||"").trim().toLowerCase(),i=e==="all"?E:E.filter(o=>o.status===e);return n!=="all"&&(i=i.filter(o=>o.crop===n)),a&&(i=i.filter(o=>(o.title||"").toLowerCase().includes(a)||(o.crop||"").toLowerCase().includes(a)||(o.buyer||"").toLowerCase().includes(a)||(o.ap||"").toLowerCase().includes(a))),[...i].sort((o,c)=>(o.status==="open"?0:1)-(c.status==="open"?0:1)||(c.postedDate||"").localeCompare(o.postedDate||""))}function qt(){Ia();let t=Ea(),e=document.getElementById("procList");e&&Ba(e,t)}function Ba(t,e){if(e.length===0){t.innerHTML=`<div class="proc-empty"><svg class="icon"><use href="#icon-sprout"/></svg><h3>Ch\u01B0a c\xF3 tin thu mua ph\xF9 h\u1EE3p</h3><p>Th\u1EED \u0111\u1ED5i b\u1ED9 l\u1ECDc ho\u1EB7c t\xECm m\u1ED9t nhu c\u1EA7u kh\xE1c.</p><button class="btn" onclick="document.getElementById('searchProc').value='';document.getElementById('filterProcStatus').value='all';document.getElementById('filterProcCrop').value='all';renderProcurements()">X\xF3a b\u1ED9 l\u1ECDc</button></div>`;return}t.innerHTML=e.map(n=>{let a=Ct(n);return`<article class="proc-card ${n.status==="closed"?"closed":""}" onclick="openProcDetail(${n.id})" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' ')openProcDetail(${n.id})"><div class="proc-card-media proc-media-${de(n)}">${Ve(n)}<div class="proc-status">${me(n.status)}</div></div><div class="proc-card-body"><p class="proc-title">${r(n.title)}</p><div class="proc-quantity"><small>NHU C\u1EA6U</small><strong>${Jt(n)}</strong><span>s\u1ED1 l\u01B0\u1EE3ng c\u1EA7n mua</span></div><div class="proc-price">${Zt(n)}</div><div class="proc-location">\u2316 ${r(n.ap||"B\xECnh M\u1EF9")} <span>\xB7</span> ${r(n.buyer||"\u0110\u1ED1i t\xE1c thu mua")}</div>${n.deadline?`<div class="proc-deadline">${r(Re(n.deadline))}</div>`:""}<div class="proc-actions"><button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openApplyForm(${n.id})" ${n.status==="closed"?"disabled":""}>Li\xEAn h\u1EC7 ng\u01B0\u1EDDi mua</button><button class="btn btn-sm" onclick="event.stopPropagation();openProcDetail(${n.id})">Xem chi ti\u1EBFt</button>${a?`<button class="btn btn-sm" onclick="event.stopPropagation();openProcForm(${n.id})">S\u1EEDa</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteProcurement(${n.id})">X\xF3a</button>`:""}</div></div></article>`}).join("")}function wa(t){let e=document.getElementById("applicants-"+t);e&&e.classList.toggle("show")}function Qe(t){if(t&&!Ct(E.find(e=>e.id===t))){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n s\u1EEDa tin thu mua n\xE0y","warn");return}if(w("procOverlay"),document.getElementById("procOverlay").classList.add("show"),O(document.getElementById("procOverlay")),t){let e=E.find(n=>n.id===t);document.getElementById("procFormTitle").textContent="S\u1EEDa tin thu mua",document.getElementById("p_editId").value=t,document.getElementById("p_title").value=e.title,document.getElementById("p_buyer").value=e.buyer,document.getElementById("p_crop").value=e.crop,document.getElementById("p_ap").value=e.ap,document.getElementById("p_quantity").value=e.quantity,document.getElementById("p_unitLabel").value=e.unitLabel||"",document.getElementById("p_priceOffer").value=e.priceOffer||"",document.getElementById("p_requirement").value=e.requirement||"",document.getElementById("p_deadline").value=e.deadline||"",document.getElementById("p_contactName").value=e.contactName||"",document.getElementById("p_contactPhone").value=e.contactPhone||"",document.getElementById("p_note").value=e.note||"",document.getElementById("p_status").value=e.status}else document.getElementById("procFormTitle").textContent="\u0110\u0103ng tin thu mua",document.getElementById("p_editId").value="",["p_title","p_buyer","p_crop","p_ap","p_quantity","p_unitLabel","p_priceOffer","p_requirement","p_deadline","p_contactName","p_contactPhone","p_note"].forEach(e=>document.getElementById(e).value=""),document.getElementById("p_status").value="open",h&&h.role==="ward"&&(document.getElementById("p_ap").value=h.ap),p&&p.role==="buyer"&&(document.getElementById("p_buyer").value=p.displayName,document.getElementById("p_contactName").value=p.displayName,document.getElementById("p_contactPhone").value=p.phone||"")}function Ue(){document.getElementById("procOverlay").classList.remove("show"),w("procOverlay"),M()}async function ka(){w("procOverlay");let t=document.getElementById("p_editId").value,e=document.getElementById("p_title").value.trim(),n=document.getElementById("p_buyer").value.trim(),a=document.getElementById("p_crop").value.trim(),i=document.getElementById("p_quantity").value.trim(),o=!1;if(e||(b("p_title","err_p_title","Vui l\xF2ng nh\u1EADp ti\xEAu \u0111\u1EC1 tin thu mua."),o=!0),n||(b("p_buyer","err_p_buyer","Vui l\xF2ng nh\u1EADp t\xEAn \u0111\u1ED1i t\xE1c thu mua."),o=!0),a||(b("p_crop","err_p_crop","Vui l\xF2ng nh\u1EADp lo\u1EA1i n\xF4ng s\u1EA3n c\u1EA7n."),o=!0),(!i||Number(i)<=0)&&(b("p_quantity","err_p_quantity","S\u1ED1 l\u01B0\u1EE3ng c\u1EA7n thu mua ph\u1EA3i l\u1EDBn h\u01A1n 0."),o=!0),o)return;let c={title:e,buyer:n,crop:a,ap:document.getElementById("p_ap").value.trim()||"To\xE0n x\xE3 B\xECnh M\u1EF9",quantity:Number(i),unitLabel:document.getElementById("p_unitLabel").value.trim()||"t\u1EA5n",priceOffer:Number(document.getElementById("p_priceOffer").value||0),requirement:document.getElementById("p_requirement").value.trim(),deadline:document.getElementById("p_deadline").value,contactName:document.getElementById("p_contactName").value.trim(),contactPhone:document.getElementById("p_contactPhone").value.trim(),note:document.getElementById("p_note").value.trim(),status:document.getElementById("p_status").value};$("btnSaveProc",!0);try{if(t){let s=E.findIndex(u=>u.id===Number(t));E[s]={...E[s],...c}}else{let s=E.length?Math.max(...E.map(d=>d.id))+1:1,u=p&&p.role==="buyer"?p.username:h?h.user:"admin";E.push({id:s,postedDate:new Date().toISOString().slice(0,10),applicants:[],ownerUsername:u,...c})}await Vt(),await T((t?"C\u1EADp nh\u1EADt tin thu mua: ":"\u0110\u0103ng tin thu mua m\u1EDBi: ")+c.title+" \u2014 b\u1EDFi "+pt()),Ue(),B(),m("\u0110\xE3 l\u01B0u tin thu mua th\xE0nh c\xF4ng","ok")}catch(s){console.error(s),m("L\u1ED7i khi l\u01B0u tin: "+s.message,"warn")}finally{$("btnSaveProc",!1)}}async function Ca(t){let e=E.find(n=>n.id===t);if(!e||!Ct(e)){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n thay \u0111\u1ED5i tin n\xE0y","warn");return}e.status=e.status==="open"?"closed":"open",await Vt(),await T((e.status==="closed"?"\u0110\xF3ng tin thu mua: ":"M\u1EDF l\u1EA1i tin thu mua: ")+e.title+" \u2014 b\u1EDFi "+pt()),B(),m("\u0110\xE3 c\u1EADp nh\u1EADt tr\u1EA1ng th\xE1i tin","ok")}async function $a(t){let e=E.find(a=>a.id===t);if(!e||!Ct(e)){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n x\xF3a tin n\xE0y","warn");return}await J("X\xF3a tin thu mua",`X\xF3a tin thu mua "${e?.title}" c\xF9ng to\xE0n b\u1ED9 danh s\xE1ch ch\xE0o h\xE0ng li\xEAn quan?`,"X\xF3a tin",!0)&&(E=E.filter(a=>a.id!==t),await Vt(),await T("X\xF3a tin thu mua: "+(e?e.title:"")+" \u2014 b\u1EDFi "+pt()),B(),m("\u0110\xE3 x\xF3a tin thu mua","warn"))}function _a(t){let e=E.find(n=>n.id===t);e&&(w("applyOverlay"),document.getElementById("ap_procId").value=t,document.getElementById("applyForTitle").textContent='G\u1EEDi th\xF4ng tin ch\xE0o h\xE0ng cho: "'+e.title+'" \u2014 '+e.buyer,["ap_name","ap_phone","ap_ap","ap_quantity","ap_note"].forEach(n=>document.getElementById(n).value=""),h&&h.role==="ward"&&(document.getElementById("ap_ap").value=h.ap),p&&p.role==="grower"&&(document.getElementById("ap_name").value=p.displayName,document.getElementById("ap_phone").value=p.phone||"",document.getElementById("ap_ap").value=p.ap||""),document.getElementById("applyOverlay").classList.add("show"),O(document.getElementById("applyOverlay")))}function je(){document.getElementById("applyOverlay").classList.remove("show"),w("applyOverlay"),M()}async function La(){w("applyOverlay");let t=Number(document.getElementById("ap_procId").value),e=document.getElementById("ap_name").value.trim(),n=document.getElementById("ap_phone").value.trim(),a=!1;if(e||(b("ap_name","err_ap_name","Vui l\xF2ng nh\u1EADp t\xEAn ng\u01B0\u1EDDi li\xEAn h\u1EC7."),a=!0),(!n||!/^[0-9+\s\-()]{8,15}$/.test(n))&&(b("ap_phone","err_ap_phone","Vui l\xF2ng nh\u1EADp s\u1ED1 \u0111i\u1EC7n tho\u1EA1i h\u1EE3p l\u1EC7."),a=!0),a)return;let i={procId:t,name:e,phone:n,ap:document.getElementById("ap_ap").value.trim(),quantity:document.getElementById("ap_quantity").value.trim(),note:document.getElementById("ap_note").value.trim()};$("btnSubmitApply",!0);try{try{await ae(ie,"submitProcurementApplication")(i)}catch{let c=E.find(s=>s.id===t);c&&(c.applicants||(c.applicants=[]),c.applicants.push({name:i.name,phone:i.phone,ap:i.ap,quantity:i.quantity,note:i.note,appliedAt:new Date().toISOString()}),await Vt())}je(),B(),m("\u0110\xE3 g\u1EEDi th\xF4ng tin ch\xE0o h\xE0ng, \u0111\u1ED1i t\xE1c s\u1EBD li\xEAn h\u1EC7 v\u1EDBi b\u1EA1n","ok")}catch(o){console.error("L\u1ED7i g\u1EEDi ch\xE0o h\xE0ng:",o),m("Kh\xF4ng g\u1EEDi \u0111\u01B0\u1EE3c, vui l\xF2ng th\u1EED l\u1EA1i: "+(o.message||""),"warn")}finally{$("btnSubmitApply",!1)}}function Nt(t){return t?typeof t.image=="string"&&t.image.trim()?t.image.trim():typeof t.imageUrl=="string"&&t.imageUrl.trim()?t.imageUrl.trim():typeof t.photoUrl=="string"&&t.photoUrl.trim()?t.photoUrl.trim():typeof t.photo=="string"&&t.photo.trim()?t.photo.trim():typeof t.thumbnail=="string"&&t.thumbnail.trim()?t.thumbnail.trim():Array.isArray(t.images)&&t.images.length>0&&typeof t.images[0]=="string"&&t.images[0].trim()?t.images[0].trim():"":""}function xa(t){if(!t)return[];let e=[];return Array.isArray(t.images)&&t.images.forEach(n=>{typeof n=="string"&&n.trim()&&!e.includes(n.trim())&&e.push(n.trim())}),["image","imageUrl","photoUrl","photo","thumbnail"].forEach(n=>{typeof t[n]=="string"&&t[n].trim()&&!e.includes(t[n].trim())&&e.push(t[n].trim())}),e}function ut(t){if(!t)return[];let e=x(t.name),n=x(t.batchCode||""),a=x(t.productCode||"");return I.filter(i=>{let o=y.find(u=>u.id===Number(i.seasonId)),c=o?x(o.name):"",s=o?x(o.crop):"";return c&&e&&(c.includes(e)||e.includes(c))||s&&e&&(s.includes(e)||e.includes(s))||n&&c&&c.includes(n)||a&&c&&c.includes(a)})}function Sa(){let t=v.filter(o=>o.status==="available").length,e=v.filter(o=>o.certification&&o.certification!=="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"&&o.certification!=="Ch\u01B0a c\xF3 ch\u1EE9ng nh\u1EADn").length,n=v.filter(o=>o.productCode||o.qrCode).length,a=v.reduce((o,c)=>o+(c.buyRequests||[]).length,0),i=document.getElementById("productStats");i&&(i.innerHTML=`
+    <div class="stat-card" style="--accent:var(--paddy)"><div class="num-face">${t}</div><div class="lbl">S\u1EA3n ph\u1EA9m \u0111ang b\xE1n</div></div>
+    <div class="stat-card" style="--accent:var(--river)"><div class="num-face">${e}</div><div class="lbl">S\u1EA3n ph\u1EA9m c\xF3 ch\u1EE9ng nh\u1EADn</div></div>
+    <div class="stat-card" style="--accent:var(--bloom)"><div class="num-face">${n}</div><div class="lbl">M\xE3 QR truy xu\u1EA5t s\u1EB5n s\xE0ng</div></div>
+    <div class="stat-card" style="--accent:var(--papaya)"><div class="num-face">${a}</div><div class="lbl">L\u01B0\u1EE3t kh\xE1ch li\xEAn h\u1EC7 mua</div></div>`)}var at="all";function Ge(){let t=document.getElementById("mStatProducts"),e=document.getElementById("mStatTested"),n=document.getElementById("mStatAvailable"),a=v.length,i=v.filter(c=>c.status==="available").length,o=v.filter(c=>c.certification&&c.certification!=="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"&&c.certification!=="Ch\u01B0a c\xF3 ch\u1EE9ng nh\u1EADn"||ut(c).length>0).length;t&&(t.textContent=a),e&&(e.textContent=o),n&&(n.textContent=i)}function Ta(){let t=document.getElementById("mobileSearchInput");if(t){t.value="";let e=document.getElementById("mobileSearchClear");e&&(e.style.display="none"),F()}}function qa(){let t=document.getElementById("searchProduct");t&&(t.value="");let e=document.getElementById("mobileSearchInput");e&&(e.value="");let n=document.getElementById("mobileSearchClear");n&&(n.style.display="none"),["filterProductName","filterProductStatus","filterProductQuality","filterProductCert"].forEach(i=>{let o=document.getElementById(i);o&&(o.value="all")});let a=document.getElementById("mobileFilterChips");a&&(a.querySelectorAll(".m-chip").forEach(i=>i.classList.remove("active")),a.querySelector('.m-chip[data-filter="all"]')?.classList.add("active")),at="all",F()}function Pa(){let t=document.getElementById("mobileFilterChips");!t||t.dataset.initialized||(t.dataset.initialized="true",t.addEventListener("click",e=>{let n=e.target.closest(".m-chip");n&&(t.querySelectorAll(".m-chip").forEach(a=>a.classList.remove("active")),n.classList.add("active"),at=n.dataset.filter||"all",F())}))}function Aa(){let t=document.getElementById("filterProductName");if(t){let l=t.value||"all",g=Array.from(new Set(v.map(f=>f.name).filter(Boolean))).sort();t.innerHTML='<option value="all">T\u1EA5t c\u1EA3 lo\u1EA1i n\xF4ng s\u1EA3n</option>'+g.map(f=>`<option value="${r(f)}" ${f===l?"selected":""}>${r(f)}</option>`).join(""),Array.from(t.options).some(f=>f.value===l)||(t.value="all")}let e=document.getElementById("filterProductName")?.value||"all",n=document.getElementById("filterProductStatus")?.value||"all",a=document.getElementById("filterProductQuality")?.value||"all",i=document.getElementById("filterProductCert")?.value||"all",o=(document.getElementById("searchProduct")?.value||"").trim(),s=(document.getElementById("mobileSearchInput")?.value||"").trim()||o,u=x(s),d=[...v];return e!=="all"&&(d=d.filter(l=>l.name===e)),n!=="all"&&(d=d.filter(l=>l.status===n)),a==="tested"?d=d.filter(l=>l.certification&&l.certification!=="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"&&l.certification!=="Ch\u01B0a c\xF3 ch\u1EE9ng nh\u1EADn"||ut(l).length>0):a==="untested"&&(d=d.filter(l=>(!l.certification||l.certification==="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"||l.certification==="Ch\u01B0a c\xF3 ch\u1EE9ng nh\u1EADn")&&ut(l).length===0)),i!=="all"&&(i==="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"?d=d.filter(l=>!l.certification||l.certification==="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"||l.certification==="Ch\u01B0a c\xF3 ch\u1EE9ng nh\u1EADn"):d=d.filter(l=>l.certification===i)),at==="available"?d=d.filter(l=>l.status==="available"):at==="tested"?d=d.filter(l=>l.certification&&l.certification!=="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"&&l.certification!=="Ch\u01B0a c\xF3 ch\u1EE9ng nh\u1EADn"||ut(l).length>0):at==="VietGAP"?d=d.filter(l=>(l.certification||"").includes("VietGAP")):at==="ap-bonphu"?d=d.filter(l=>x(l.ap||"").includes("bon phu")):at==="ap-anhoa"&&(d=d.filter(l=>x(l.ap||"").includes("an hoa"))),u&&(d=d.filter(l=>{let g=x(l.name),f=x(l.sellerName),V=x(l.ap),et=x(l.productCode),N=x(l.batchCode),Gt=x(l.qrCode),ct=x(l.certification);return g.includes(u)||f.includes(u)||V.includes(u)||et.includes(u)||N.includes(u)||Gt.includes(u)||ct.includes(u)})),d.sort((l,g)=>(l.status==="available"?0:1)-(g.status==="available"?0:1)||(g.postedDate||"").localeCompare(l.postedDate||""))}function F(){Sa(),Ge(),Pa();let t=Aa(),e=document.getElementById("productMarketplaceGrid")||document.getElementById("mobileProductCards"),n=document.getElementById("desktopProductTableBody"),a=document.getElementById("mobileProductCards"),i=document.getElementById("mobileHomeProductPreview"),o=document.getElementById("mobileProductCountLabel"),c=document.getElementById("desktopProductCountLabel"),s=v.filter(l=>l.status==="available").length,u=`Hi\u1EC3n th\u1ECB ${t.length} n\xF4ng s\u1EA3n (${s} \u0111ang b\xE1n)`;if(o&&(o.textContent=u),c&&(c.textContent=u),i){let l=v.filter(g=>g.status==="available").slice(0,3);l.length===0?i.innerHTML='<div style="text-align:center;color:var(--ink-soft);padding:14px;background:var(--surface);border-radius:12px;font-size:13px;">Ch\u01B0a c\xF3 n\xF4ng s\u1EA3n m\u1EDBi. B\xE0 con c\xF3 th\u1EC3 \u0111\u0103ng b\xE1n ngay!</div>':i.innerHTML=l.map(g=>{let f=Nt(g);return`
+          <div class="mobile-action-card mobile-home-prod-card" onclick="showProductDetail(${g.id})" style="cursor:pointer;">
             <div class="action-card-img-thumb">
-              ${img ? `<img src="${esc(img)}" alt="${esc(p.name)}" class="m-home-thumb" loading="lazy" decoding="async" onerror="this.parentElement.innerHTML='<span class=\\'thumb-sprout\\'>🌱</span>';">` : '<span class="thumb-sprout">🌱</span>'}
+              ${f?`<img src="${r(f)}" alt="${r(g.name)}" class="m-home-thumb" loading="lazy" decoding="async" onerror="this.parentElement.innerHTML='<span class=\\'thumb-sprout\\'>\u{1F331}</span>';">`:'<span class="thumb-sprout">\u{1F331}</span>'}
             </div>
             <div class="action-card-text" style="flex:1;min-width:0;">
-              <strong style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;">${esc(p.name)}</strong>
-              <span style="font-size:12px;color:var(--ink-soft);">${esc(p.sellerName || 'Hộ vườn')} · ${esc(p.ap || 'Bình Mỹ')}</span>
+              <strong style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;">${r(g.name)}</strong>
+              <span style="font-size:12px;color:var(--ink-soft);">${r(g.sellerName||"H\u1ED9 v\u01B0\u1EDDn")} \xB7 ${r(g.ap||"B\xECnh M\u1EF9")}</span>
               <div style="font-size:13.5px;font-weight:700;color:var(--paddy-deep);font-family:'Space Grotesk',sans-serif;margin-top:2px;">
-                ${money(p.price)} đ/${esc(p.unitLabel || 'kg')}
+                ${_(g.price)} \u0111/${r(g.unitLabel||"kg")}
               </div>
             </div>
             <div style="color:var(--paddy-deep);font-weight:700;font-size:12.5px;flex:none;">
-              Xem →
+              Xem \u2192
             </div>
           </div>
-        `;
-      }).join('');
-    }
-  }
-
-  // 2. Xử lý trạng thái rỗng
-  if(list.length === 0){
-    const emptyHtml = `
+        `}).join("")}if(t.length===0){let l=`
       <div class="empty-product-state" style="padding:48px 16px;text-align:center;grid-column:1/-1;width:100%;">
-        <div style="font-size:42px;margin-bottom:8px;">🌱</div>
-        <div style="font-weight:700;font-size:18px;margin-bottom:6px;color:var(--ink);">Chưa tìm thấy sản phẩm</div>
+        <div style="font-size:42px;margin-bottom:8px;">\u{1F331}</div>
+        <div style="font-weight:700;font-size:18px;margin-bottom:6px;color:var(--ink);">Ch\u01B0a t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m</div>
         <p style="color:var(--ink-soft);font-size:13.5px;max-width:440px;margin:0 auto 16px;line-height:1.5;">
-          Thử đổi từ khóa hoặc bỏ bớt bộ lọc để tìm thấy các loại nông sản khác đang có sẵn tại Bình Mỹ.
+          Th\u1EED \u0111\u1ED5i t\u1EEB kh\xF3a ho\u1EB7c b\u1ECF b\u1EDBt b\u1ED9 l\u1ECDc \u0111\u1EC3 t\xECm th\u1EA5y c\xE1c lo\u1EA1i n\xF4ng s\u1EA3n kh\xE1c \u0111ang c\xF3 s\u1EB5n t\u1EA1i B\xECnh M\u1EF9.
         </p>
         <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
           <button type="button" class="btn btn-primary" onclick="clearAllProductFilters()">
-            <svg class="icon icon-14"><use href="#icon-refresh"/></svg> Xóa bộ lọc
+            <svg class="icon icon-14"><use href="#icon-refresh"/></svg> X\xF3a b\u1ED9 l\u1ECDc
           </button>
           <button type="button" class="btn" onclick="handleOpenProductForm()">
-            <svg class="icon icon-14"><use href="#icon-plus"/></svg> Đăng sản phẩm mới
+            <svg class="icon icon-14"><use href="#icon-plus"/></svg> \u0110\u0103ng s\u1EA3n ph\u1EA9m m\u1EDBi
           </button>
         </div>
-      </div>`;
-    if(gridContainer) gridContainer.innerHTML = emptyHtml;
-    if(desktopTableBody) desktopTableBody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:30px;">${emptyHtml}</td></tr>`;
-    if(mobileCards && mobileCards !== gridContainer) mobileCards.innerHTML = emptyHtml;
-    return;
-  }
-
-  // 3. Render Marketplace Cards Grid (Modern Product Marketplace Layout)
-  const cardsHtml = list.map(p => {
-    const canEdit = canManageProduct(p);
-    const tests = getProductQualityTests(p);
-    const isTested = tests.length > 0 || (p.certification && p.certification !== 'Chưa kiểm định' && p.certification !== 'Chưa có chứng nhận');
-    const img = getProductImage(p);
-    const isAvailable = p.status === 'available';
-    const isLowStock = isAvailable && p.quantity > 0 && p.quantity <= 30;
-
-    // Badges
-    let certBadgeHtml = '';
-    if(p.certification && p.certification.includes('VietGAP')){
-      certBadgeHtml = '<span class="card-badge badge-vietgap">✓ VietGAP</span>';
-    } else if(p.certification && p.certification.includes('GlobalGAP')){
-      certBadgeHtml = '<span class="card-badge badge-globalgap">✓ Xuất khẩu</span>';
-    } else if(isTested){
-      certBadgeHtml = `<span class="card-badge badge-tested">✓ Đã kiểm (${tests.length > 0 ? tests.length + ' tiêu chí' : 'Đạt'})</span>`;
-    }
-
-    let stockBadgeHtml = '';
-    if(!isAvailable){
-      stockBadgeHtml = '<span class="card-badge badge-soldout">Hết hàng</span>';
-    } else if(isLowStock){
-      stockBadgeHtml = '<span class="card-badge badge-lowstock">Sắp hết</span>';
-    } else {
-      stockBadgeHtml = '<span class="card-badge badge-available">Còn hàng</span>';
-    }
-
-    const qrBadgeHtml = p.productCode || p.qrCode
-      ? `<span class="card-badge badge-qr" title="Mã QR tra cứu nguồn gốc"><svg class="icon icon-12"><use href="#icon-qr-code"/></svg> QR</span>`
-      : '';
-
-    // Quality line
-    let qualityTextHtml = '';
-    if(p.certification && p.certification !== 'Chưa kiểm định' && p.certification !== 'Chưa có chứng nhận'){
-      qualityTextHtml = `<span class="cert-text-ok">✓ ${esc(p.certification)}</span>`;
-    } else if(isTested){
-      qualityTextHtml = `<span class="cert-text-ok">✓ Đã kiểm định an toàn</span>`;
-    } else {
-      qualityTextHtml = `<span class="cert-text-muted">Chưa có thông tin kiểm định</span>`;
-    }
-
-    return `
-      <div class="product-card ${!isAvailable ? 'is-soldout' : ''}" onclick="showProductDetail(${p.id})" title="Bấm xem chi tiết ${esc(p.name)}">
+      </div>`;e&&(e.innerHTML=l),n&&(n.innerHTML=`<tr><td colspan="9" style="text-align:center;padding:30px;">${l}</td></tr>`),a&&a!==e&&(a.innerHTML=l);return}let d=t.map(l=>{let g=Qt(l),f=ut(l),V=f.length>0||l.certification&&l.certification!=="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"&&l.certification!=="Ch\u01B0a c\xF3 ch\u1EE9ng nh\u1EADn",et=Nt(l),N=l.status==="available",Gt=N&&l.quantity>0&&l.quantity<=30,ct="";l.certification&&l.certification.includes("VietGAP")?ct='<span class="card-badge badge-vietgap">\u2713 VietGAP</span>':l.certification&&l.certification.includes("GlobalGAP")?ct='<span class="card-badge badge-globalgap">\u2713 Xu\u1EA5t kh\u1EA9u</span>':V&&(ct=`<span class="card-badge badge-tested">\u2713 \u0110\xE3 ki\u1EC3m (${f.length>0?f.length+" ti\xEAu ch\xED":"\u0110\u1EA1t"})</span>`);let _t="";N?Gt?_t='<span class="card-badge badge-lowstock">S\u1EAFp h\u1EBFt</span>':_t='<span class="card-badge badge-available">C\xF2n h\xE0ng</span>':_t='<span class="card-badge badge-soldout">H\u1EBFt h\xE0ng</span>';let vn=l.productCode||l.qrCode?'<span class="card-badge badge-qr" title="M\xE3 QR tra c\u1EE9u ngu\u1ED3n g\u1ED1c"><svg class="icon icon-12"><use href="#icon-qr-code"/></svg> QR</span>':"",Lt="";return l.certification&&l.certification!=="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"&&l.certification!=="Ch\u01B0a c\xF3 ch\u1EE9ng nh\u1EADn"?Lt=`<span class="cert-text-ok">\u2713 ${r(l.certification)}</span>`:V?Lt='<span class="cert-text-ok">\u2713 \u0110\xE3 ki\u1EC3m \u0111\u1ECBnh an to\xE0n</span>':Lt='<span class="cert-text-muted">Ch\u01B0a c\xF3 th\xF4ng tin ki\u1EC3m \u0111\u1ECBnh</span>',`
+      <div class="product-card ${N?"":"is-soldout"}" onclick="showProductDetail(${l.id})" title="B\u1EA5m xem chi ti\u1EBFt ${r(l.name)}">
         <div class="product-card-img-wrap">
           <div class="card-badges-top-left">
-            ${certBadgeHtml}
-            ${qrBadgeHtml}
+            ${ct}
+            ${vn}
           </div>
           <div class="card-badges-top-right">
-            ${stockBadgeHtml}
+            ${_t}
           </div>
-          ${img ? `
+          ${et?`
             <img
-              src="${esc(img)}"
-              alt="${esc(p.name)}"
+              src="${r(et)}"
+              alt="${r(l.name)}"
               loading="lazy"
               decoding="async"
               class="product-card-image"
-              onerror="this.onerror=null;this.parentElement.querySelector('.product-image-placeholder')?.remove();this.insertAdjacentHTML('afterend','<div class=\\'product-image-placeholder\\'><span>🌱</span><small>Chưa có ảnh</small></div>');this.style.display='none';">
-          ` : `
+              onerror="this.onerror=null;this.parentElement.querySelector('.product-image-placeholder')?.remove();this.insertAdjacentHTML('afterend','<div class=\\'product-image-placeholder\\'><span>\u{1F331}</span><small>Ch\u01B0a c\xF3 \u1EA3nh</small></div>');this.style.display='none';">
+          `:`
             <div class="product-image-placeholder">
-              <span>🌱</span>
-              <small>Chưa có ảnh sản phẩm</small>
+              <span>\u{1F331}</span>
+              <small>Ch\u01B0a c\xF3 \u1EA3nh s\u1EA3n ph\u1EA9m</small>
             </div>
           `}
         </div>
 
         <div class="product-card-body">
-          <h3 class="product-card-title">${esc(p.name)}</h3>
+          <h3 class="product-card-title">${r(l.name)}</h3>
           
           <div class="product-card-price">
-            ${money(p.price)} đ<span class="product-card-unit">/${esc(p.unitLabel || 'kg')}</span>
+            ${_(l.price)} \u0111<span class="product-card-unit">/${r(l.unitLabel||"kg")}</span>
           </div>
 
           <div class="product-card-stock">
-            ${isAvailable ? `📦 Còn <strong>${esc(p.quantity)} ${esc(p.unitLabel || 'kg')}</strong>` : '<span class="text-danger" style="font-weight:600;">Hết hàng</span>'}
+            ${N?`\u{1F4E6} C\xF2n <strong>${r(l.quantity)} ${r(l.unitLabel||"kg")}</strong>`:'<span class="text-danger" style="font-weight:600;">H\u1EBFt h\xE0ng</span>'}
           </div>
 
           <div class="product-card-cert">
-            ${qualityTextHtml}
+            ${Lt}
           </div>
 
-          <div class="product-card-origin" title="${esc(p.ap || 'Xã Bình Mỹ')} · ${esc(p.sellerName || 'Hộ vườn')}">
+          <div class="product-card-origin" title="${r(l.ap||"X\xE3 B\xECnh M\u1EF9")} \xB7 ${r(l.sellerName||"H\u1ED9 v\u01B0\u1EDDn")}">
             <svg class="icon icon-14" style="flex:none;"><use href="#icon-map-pin"/></svg>
-            <span>${esc(p.ap || 'Xã Bình Mỹ')} · ${esc(p.sellerName || 'Hộ vườn')}</span>
+            <span>${r(l.ap||"X\xE3 B\xECnh M\u1EF9")} \xB7 ${r(l.sellerName||"H\u1ED9 v\u01B0\u1EDDn")}</span>
           </div>
 
           <div class="product-card-actions">
-            <button type="button" class="btn btn-sm btn-card-detail" onclick="event.stopPropagation();showProductDetail(${p.id})">
+            <button type="button" class="btn btn-sm btn-card-detail" onclick="event.stopPropagation();showProductDetail(${l.id})">
               <svg class="icon icon-14"><use href="#icon-eye"/></svg> Xem
             </button>
-            <button type="button" class="btn btn-sm btn-primary btn-card-buy" onclick="event.stopPropagation();openBuyForm(${p.id})" ${!isAvailable ? 'disabled' : ''}>
+            <button type="button" class="btn btn-sm btn-primary btn-card-buy" onclick="event.stopPropagation();openBuyForm(${l.id})" ${N?"":"disabled"}>
               <svg class="icon icon-14"><use href="#icon-phone"/></svg> Mua
             </button>
           </div>
 
-          ${canEdit ? `
+          ${g?`
             <div class="product-card-admin-row" onclick="event.stopPropagation();">
-              <button type="button" class="btn-card-admin" onclick="openProductForm(${p.id})" title="Chỉnh sửa thông tin">Sửa</button>
-              <button type="button" class="btn-card-admin" onclick="toggleProductStatus(${p.id})" title="Đổi trạng thái">${isAvailable ? 'Tạm ngưng' : 'Mở bán'}</button>
-              <button type="button" class="btn-card-admin text-danger" onclick="deleteProduct(${p.id})" title="Xóa mặt hàng">Xóa</button>
+              <button type="button" class="btn-card-admin" onclick="openProductForm(${l.id})" title="Ch\u1EC9nh s\u1EEDa th\xF4ng tin">S\u1EEDa</button>
+              <button type="button" class="btn-card-admin" onclick="toggleProductStatus(${l.id})" title="\u0110\u1ED5i tr\u1EA1ng th\xE1i">${N?"T\u1EA1m ng\u01B0ng":"M\u1EDF b\xE1n"}</button>
+              <button type="button" class="btn-card-admin text-danger" onclick="deleteProduct(${l.id})" title="X\xF3a m\u1EB7t h\xE0ng">X\xF3a</button>
             </div>
-          ` : ''}
+          `:""}
         </div>
       </div>
-    `;
-  }).join('');
-
-  if(gridContainer) gridContainer.innerHTML = cardsHtml;
-  if(mobileCards && mobileCards !== gridContainer) mobileCards.innerHTML = cardsHtml;
-  if(desktopTableBody) desktopTableBody.innerHTML = '';
-}
-
-function toggleBuyers(id){
-  const box = document.getElementById('buyers-' + id);
-  if(box) box.classList.toggle('show');
-}
-
-function previewProductFormImage(url){
-  const box = document.getElementById('pr_image_preview_box');
-  const img = document.getElementById('pr_image_preview');
-  const err = document.getElementById('pr_image_err');
-  if(!box || !img) return;
-  if(err) err.style.display = 'none';
-
-  if(url && typeof url === 'string' && url.trim()){
-    img.src = url.trim();
-    box.style.display = 'block';
-  }else{
-    box.style.display = 'none';
-    img.src = '';
-  }
-}
-
-function handleProductFormImgError(){
-  const box = document.getElementById('pr_image_preview_box');
-  const err = document.getElementById('pr_image_err');
-  if(box) box.style.display = 'none';
-  if(err) err.style.display = 'block';
-}
-
-function clearProductFormImage(){
-  const input = document.getElementById('pr_image');
-  if(input) input.value = '';
-  previewProductFormImage('');
-}
-
-function handleOpenProductForm(){
-  if(!currentUser && (!currentPersonUser || currentPersonUser.role !== 'grower')){
-    openPersonAuth();
-    toast('Vui lòng đăng nhập tài khoản hộ trồng để đăng bán sản phẩm', 'warn');
-    return;
-  }
-  openProductForm();
-}
-
-function openProductForm(id){
-  if(id && !canManageProduct(products.find(x => x.id === id))){
-    toast('Bạn không có quyền chỉnh sửa sản phẩm này', 'warn');
-    return;
-  }
-  clearFieldErrors('productOverlay');
-  document.getElementById('productOverlay').classList.add('show');
-  
-  if(id){
-    const p = products.find(x => x.id === id);
-    document.getElementById('productFormTitle').textContent = 'Sửa thông tin sản phẩm';
-    document.getElementById('pr_editId').value = id;
-    document.getElementById('pr_productCode').value = p.productCode || ('BM-2026-' + String(p.id).padStart(3, '0'));
-    document.getElementById('pr_batchCode').value = p.batchCode || '';
-    document.getElementById('pr_name').value = p.name || '';
-    document.getElementById('pr_seller').value = p.sellerName || '';
-    document.getElementById('pr_ap').value = p.ap || 'Ấp Bốn Phú';
-    document.getElementById('pr_quantity').value = p.quantity || '';
-    document.getElementById('pr_unitLabel').value = p.unitLabel || 'kg';
-    document.getElementById('pr_price').value = p.price || '';
-    document.getElementById('pr_harvestDate').value = p.harvestDate || p.postedDate || '';
-    document.getElementById('pr_certification').value = p.certification || 'Chưa kiểm định';
-    document.getElementById('pr_contactName').value = p.contactName || '';
-    document.getElementById('pr_contactPhone').value = p.contactPhone || '';
-    document.getElementById('pr_note').value = p.note || '';
-    document.getElementById('pr_status').value = p.status || 'available';
-
-    const imgVal = getProductImage(p);
-    const imgInput = document.getElementById('pr_image');
-    if(imgInput) imgInput.value = imgVal || '';
-    previewProductFormImage(imgVal);
-  }else{
-    document.getElementById('productFormTitle').textContent = 'Đăng sản phẩm bán mới';
-    document.getElementById('pr_editId').value = '';
-    const nextId = products.length ? Math.max(...products.map(x => Number(x.id) || 0)) + 1 : 1;
-    document.getElementById('pr_productCode').value = 'BM-' + new Date().getFullYear() + '-' + String(nextId).padStart(3, '0');
-    document.getElementById('pr_batchCode').value = 'LÔ-' + String(nextId).padStart(2, '0');
-    document.getElementById('pr_harvestDate').value = new Date().toISOString().slice(0, 10);
-    
-    ['pr_name','pr_seller','pr_ap','pr_quantity','pr_price','pr_contactName','pr_contactPhone','pr_note','pr_image'].forEach(k => {
-      const el = document.getElementById(k);
-      if(el) el.value = '';
-    });
-    previewProductFormImage('');
-    document.getElementById('pr_unitLabel').value = 'kg';
-    document.getElementById('pr_certification').value = 'Chưa kiểm định';
-    document.getElementById('pr_status').value = 'available';
-
-    if(currentUser && currentUser.role === 'ward') document.getElementById('pr_ap').value = currentUser.ap;
-    if(currentPersonUser && currentPersonUser.role === 'grower'){
-      document.getElementById('pr_seller').value = currentPersonUser.displayName;
-      document.getElementById('pr_contactName').value = currentPersonUser.displayName;
-      document.getElementById('pr_contactPhone').value = currentPersonUser.phone || '';
-      document.getElementById('pr_ap').value = currentPersonUser.ap || 'Ấp Bốn Phú';
-    }
-  }
-}
-
-function closeProductForm(){
-  document.getElementById('productOverlay').classList.remove('show');
-  clearFieldErrors('productOverlay');
-}
-
-async function saveProductForm(){
-  clearFieldErrors('productOverlay');
-  const id = document.getElementById('pr_editId').value;
-  const nameVal = document.getElementById('pr_name').value.trim();
-  const sellerVal = document.getElementById('pr_seller').value.trim();
-  const quantityVal = document.getElementById('pr_quantity').value.trim();
-  const priceVal = document.getElementById('pr_price').value.trim();
-  let codeVal = document.getElementById('pr_productCode').value.trim().toUpperCase();
-  const batchVal = document.getElementById('pr_batchCode').value.trim().toUpperCase();
-  const harvestVal = document.getElementById('pr_harvestDate').value;
-  const imgVal = document.getElementById('pr_image')?.value.trim() || '';
-
-  let hasErr = false;
-  if(!nameVal){
-    setFieldError('pr_name', 'err_pr_name', 'Vui lòng nhập tên nông sản (VD: Chôm chôm, Sơ ri, Cà chua).');
-    hasErr = true;
-  }
-  if(!sellerVal){
-    setFieldError('pr_seller', 'err_pr_seller', 'Vui lòng nhập tên người bán hoặc hộ trồng.');
-    hasErr = true;
-  }
-  if(!quantityVal || Number(quantityVal) <= 0){
-    setFieldError('pr_quantity', 'err_pr_quantity', 'Khối lượng bán phải lớn hơn 0.');
-    hasErr = true;
-  }
-  if(!priceVal || Number(priceVal) < 0){
-    setFieldError('pr_price', 'err_pr_price', 'Vui lòng nhập giá bán hợp lệ.');
-    hasErr = true;
-  }
-  if(hasErr) return;
-
-  const newId = id ? Number(id) : (products.length ? Math.max(...products.map(x => Number(x.id) || 0)) + 1 : 1);
-  if(!codeVal){
-    codeVal = 'BM-' + new Date().getFullYear() + '-' + String(newId).padStart(3, '0');
-  }
-
-  const record = {
-    productCode: codeVal,
-    batchCode: batchVal || ('LÔ-' + String(newId).padStart(2, '0')),
-    name: nameVal,
-    sellerName: sellerVal,
-    ap: document.getElementById('pr_ap').value.trim() || 'Xã Bình Mỹ',
-    quantity: Number(quantityVal),
-    unitLabel: document.getElementById('pr_unitLabel').value.trim() || 'kg',
-    price: Number(priceVal),
-    harvestDate: harvestVal || new Date().toISOString().slice(0, 10),
-    certification: document.getElementById('pr_certification').value,
-    contactName: document.getElementById('pr_contactName').value.trim() || sellerVal,
-    contactPhone: document.getElementById('pr_contactPhone').value.trim(),
-    note: document.getElementById('pr_note').value.trim(),
-    image: imgVal,
-    imageUrl: imgVal,
-    status: document.getElementById('pr_status').value,
-    qrCode: `${window.location.origin}${window.location.pathname}#san-pham=${encodeURIComponent(codeVal)}`
-  };
-
-  setBtnLoading('pr_saveBtn', true);
-  try{
-    if(id){
-      const idx = products.findIndex(x => x.id === Number(id));
-      products[idx] = { ...products[idx], ...record };
-    }else{
-      const ownerUsername = (currentPersonUser && currentPersonUser.role === 'grower')
-        ? currentPersonUser.username
-        : (currentUser ? currentUser.user : 'admin');
-
-      products.push({
-        id: newId,
-        postedDate: new Date().toISOString().slice(0, 10),
-        buyRequests: [],
-        ownerUsername,
-        ...record
-      });
-    }
-    await saveProducts();
-    await logActivity((id ? 'Cập nhật sản phẩm: ' : 'Đăng bán sản phẩm mới: ') + record.name + ' — bởi ' + actorLabel());
-    closeProductForm();
-    renderAll();
-    toast('✅ Đã lưu sản phẩm thành công', 'ok');
-  }catch(e){
-    console.error(e);
-    toast('Không thể lưu sản phẩm: ' + (e.message || 'Lỗi kết nối'), 'warn');
-  }finally{
-    setBtnLoading('pr_saveBtn', false);
-  }
-}
-
-async function toggleProductStatus(id){
-  const p = products.find(x => x.id === id);
-  if(!p || !canManageProduct(p)){
-    toast('Bạn không có quyền sửa sản phẩm này', 'warn');
-    return;
-  }
-  p.status = p.status === 'available' ? 'soldout' : 'available';
-  await saveProducts();
-  await logActivity((p.status === 'soldout' ? 'Đánh dấu hết hàng: ' : 'Mở bán lại: ') + p.name + ' — bởi ' + actorLabel());
-  renderAll();
-  toast('Đã cập nhật trạng thái sản phẩm', 'ok');
-}
-
-async function deleteProduct(id){
-  const p = products.find(x => x.id === id);
-  if(!p || !canManageProduct(p)){
-    toast('Bạn không có quyền xóa sản phẩm này', 'warn');
-    return;
-  }
-  const ok = await showConfirmDialog(
-    'Xóa sản phẩm nông sản',
-    `Bạn có chắc chắn muốn xóa mặt hàng "${p?.name}" (Mã: ${p?.productCode || p?.id})?`,
-    'Xóa mặt hàng',
-    true
-  );
-  if(!ok) return;
-
-  products = products.filter(x => x.id !== id);
-  await saveProducts();
-  await logActivity('Xóa sản phẩm bán: ' + (p ? p.name : '') + ' — bởi ' + actorLabel());
-  renderAll();
-  toast('✅ Đã xóa sản phẩm', 'warn');
-}
-
-/* ============ QUÉT QR BẰNG CAMERA & TRA CỨU MÃ THỦ CÔNG ============ */
-let html5QrScannerInstance = null;
-let currentFacingMode = "environment";
-
-async function openQrScanner(){
-  const overlay = document.getElementById('qrScanOverlay');
-  if(!overlay) return;
-  overlay.classList.add('show');
-  
-  const notice = document.getElementById('qrCameraNotice');
-  if(notice) notice.style.display = 'none';
-
-  const inputManual = document.getElementById('manualProductCode');
-  if(inputManual) inputManual.value = '';
-
-  // Khởi động Html5Qrcode nếu có thư viện
-  if(typeof Html5Qrcode !== 'undefined'){
-    try{
-      if(html5QrScannerInstance){
-        try{ await html5QrScannerInstance.stop(); }catch(ignore){}
-        try{ await html5QrScannerInstance.clear(); }catch(ignore){}
-      }
-      html5QrScannerInstance = new Html5Qrcode("qrReader");
-      await html5QrScannerInstance.start(
-        { facingMode: currentFacingMode },
-        { fps: 10, qrbox: { width: 220, height: 220 } },
-        (decodedText) => {
-          handleQrScanned(decodedText);
-        },
-        () => {}
-      );
-    }catch(err){
-      console.warn("Lỗi camera scanner:", err);
-      if(notice){
-        notice.style.display = 'block';
-        notice.innerHTML = `⚠️ <strong>Chưa bật được camera:</strong> Bạn chưa cho phép sử dụng camera hoặc thiết bị không có camera. Hãy bấm Cho phép trên trình duyệt hoặc nhập mã sản phẩm bên dưới để tra cứu ngay.`;
-      }
-    }
-  }else{
-    if(notice){
-      notice.style.display = 'block';
-      notice.innerHTML = `ℹ️ Đang tải máy quét... Nếu camera không mở, bạn vui lòng nhập mã sản phẩm bên dưới.`;
-    }
-  }
-}
-
-async function closeQrScanner(){
-  const overlay = document.getElementById('qrScanOverlay');
-  if(overlay) overlay.classList.remove('show');
-  if(html5QrScannerInstance){
-    try{
-      await html5QrScannerInstance.stop();
-      await html5QrScannerInstance.clear();
-    }catch(ignore){}
-    html5QrScannerInstance = null;
-  }
-}
-
-async function switchCameraFacing(){
-  currentFacingMode = currentFacingMode === "environment" ? "user" : "environment";
-  toast('Đang chuyển đổi camera...', 'ok');
-  await openQrScanner();
-}
-
-function handleQrScanned(rawText){
-  if(navigator.vibrate) navigator.vibrate(100);
-  closeQrScanner();
-
-  // Bóc tách mã từ URL nếu quét URL
-  let code = String(rawText || '').trim();
-  if(code.includes('#san-pham=')){
-    code = code.split('#san-pham=')[1].split('&')[0];
-  }else if(code.includes('?p=')){
-    code = code.split('?p=')[1].split('&')[0];
-  }
-  code = decodeURIComponent(code).trim();
-  showProductDetailByCode(code);
-}
-
-function openManualLookup(){
-  openQrScanner();
-  setTimeout(() => {
-    const input = document.getElementById('manualProductCode');
-    if(input){
-      input.focus();
-      input.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  }, 300);
-}
-
-function lookupManualCode(){
-  const input = document.getElementById('manualProductCode');
-  const code = (input?.value || '').trim();
-  if(!code){
-    toast('Vui lòng nhập mã sản phẩm (VD: BM-2026-001 hoặc 1)', 'warn');
-    input?.focus();
-    return;
-  }
-  closeQrScanner();
-  showProductDetailByCode(code);
-}
-
-/* ============ HIỂN THỊ CHI TIẾT SẢN PHẨM & TRẠNG THÁI QR ============ */
-function findProductByCodeOrId(identifier){
-  const clean = String(identifier || '').trim();
-  if(!clean) return null;
-  const cleanNorm = removeVietnameseTones(clean);
-
-  // 1. Tìm chính xác theo productCode
-  let found = products.find(p => String(p.productCode || '').trim().toLowerCase() === clean.toLowerCase());
-  if(found) return found;
-
-  // 2. Tìm theo id số
-  found = products.find(p => String(p.id) === clean);
-  if(found) return found;
-
-  // 3. Tìm theo batchCode
-  found = products.find(p => String(p.batchCode || '').trim().toLowerCase() === clean.toLowerCase());
-  if(found) return found;
-
-  // 4. Tìm tương đối qua qrCode URL hoặc tên
-  found = products.find(p => {
-    const pCodeNorm = removeVietnameseTones(p.productCode || '');
-    const pBatchNorm = removeVietnameseTones(p.batchCode || '');
-    return pCodeNorm.includes(cleanNorm) || pBatchNorm.includes(cleanNorm);
-  });
-  return found || null;
-}
-
-function showProductDetail(id){
-  const p = products.find(x => x.id === Number(id));
-  if(!p){
-    showProductDetailNotFound(id);
-    return;
-  }
-  renderProductDetailModal(p);
-}
-
-function showProductDetailByCode(code){
-  const p = findProductByCodeOrId(code);
-  if(!p){
-    showProductDetailNotFound(code);
-    return;
-  }
-  renderProductDetailModal(p);
-}
-
-function showProductDetailNotFound(searchKey){
-  const overlay = document.getElementById('productDetailOverlay');
-  const content = document.getElementById('productDetailContent');
-  if(!overlay || !content) return;
-
-  content.innerHTML = `
+    `}).join("");e&&(e.innerHTML=d),a&&a!==e&&(a.innerHTML=d),n&&(n.innerHTML="")}function Ma(t){let e=document.getElementById("buyers-"+t);e&&e.classList.toggle("show")}function Ht(t){let e=document.getElementById("pr_image_preview_box"),n=document.getElementById("pr_image_preview"),a=document.getElementById("pr_image_err");!e||!n||(a&&(a.style.display="none"),t&&typeof t=="string"&&t.trim()?(n.src=t.trim(),e.style.display="block"):(e.style.display="none",n.src=""))}function Na(){let t=document.getElementById("pr_image_preview_box"),e=document.getElementById("pr_image_err");t&&(t.style.display="none"),e&&(e.style.display="block")}function Ha(){let t=document.getElementById("pr_image");t&&(t.value=""),Ht("")}function Da(){if(!h&&(!p||p.role!=="grower")){Ut(),m("Vui l\xF2ng \u0111\u0103ng nh\u1EADp t\xE0i kho\u1EA3n h\u1ED9 tr\u1ED3ng \u0111\u1EC3 \u0111\u0103ng b\xE1n s\u1EA3n ph\u1EA9m","warn");return}Xe()}function Xe(t){if(t&&!Qt(v.find(e=>e.id===t))){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n ch\u1EC9nh s\u1EEDa s\u1EA3n ph\u1EA9m n\xE0y","warn");return}if(w("productOverlay"),document.getElementById("productOverlay").classList.add("show"),O(document.getElementById("productOverlay")),t){let e=v.find(i=>i.id===t);document.getElementById("productFormTitle").textContent="S\u1EEDa th\xF4ng tin s\u1EA3n ph\u1EA9m",document.getElementById("pr_editId").value=t,document.getElementById("pr_productCode").value=e.productCode||"BM-2026-"+String(e.id).padStart(3,"0"),document.getElementById("pr_batchCode").value=e.batchCode||"",document.getElementById("pr_name").value=e.name||"",document.getElementById("pr_seller").value=e.sellerName||"",document.getElementById("pr_ap").value=e.ap||"\u1EA4p B\u1ED1n Ph\xFA",document.getElementById("pr_quantity").value=e.quantity||"",document.getElementById("pr_unitLabel").value=e.unitLabel||"kg",document.getElementById("pr_price").value=e.price||"",document.getElementById("pr_harvestDate").value=e.harvestDate||e.postedDate||"",document.getElementById("pr_certification").value=e.certification||"Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh",document.getElementById("pr_contactName").value=e.contactName||"",document.getElementById("pr_contactPhone").value=e.contactPhone||"",document.getElementById("pr_note").value=e.note||"",document.getElementById("pr_status").value=e.status||"available";let n=Nt(e),a=document.getElementById("pr_image");a&&(a.value=n||""),Ht(n)}else{document.getElementById("productFormTitle").textContent="\u0110\u0103ng s\u1EA3n ph\u1EA9m b\xE1n m\u1EDBi",document.getElementById("pr_editId").value="";let e=v.length?Math.max(...v.map(n=>Number(n.id)||0))+1:1;document.getElementById("pr_productCode").value="BM-"+new Date().getFullYear()+"-"+String(e).padStart(3,"0"),document.getElementById("pr_batchCode").value="L\xD4-"+String(e).padStart(2,"0"),document.getElementById("pr_harvestDate").value=new Date().toISOString().slice(0,10),["pr_name","pr_seller","pr_ap","pr_quantity","pr_price","pr_contactName","pr_contactPhone","pr_note","pr_image"].forEach(n=>{let a=document.getElementById(n);a&&(a.value="")}),Ht(""),document.getElementById("pr_unitLabel").value="kg",document.getElementById("pr_certification").value="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh",document.getElementById("pr_status").value="available",h&&h.role==="ward"&&(document.getElementById("pr_ap").value=h.ap),p&&p.role==="grower"&&(document.getElementById("pr_seller").value=p.displayName,document.getElementById("pr_contactName").value=p.displayName,document.getElementById("pr_contactPhone").value=p.phone||"",document.getElementById("pr_ap").value=p.ap||"\u1EA4p B\u1ED1n Ph\xFA")}}function Ke(){document.getElementById("productOverlay").classList.remove("show"),w("productOverlay"),M()}async function Oa(){w("productOverlay");let t=document.getElementById("pr_editId").value,e=document.getElementById("pr_name").value.trim(),n=document.getElementById("pr_seller").value.trim(),a=document.getElementById("pr_quantity").value.trim(),i=document.getElementById("pr_price").value.trim(),o=document.getElementById("pr_productCode").value.trim().toUpperCase(),c=document.getElementById("pr_batchCode").value.trim().toUpperCase(),s=document.getElementById("pr_harvestDate").value,u=document.getElementById("pr_image")?.value.trim()||"",d=!1;if(e||(b("pr_name","err_pr_name","Vui l\xF2ng nh\u1EADp t\xEAn n\xF4ng s\u1EA3n (VD: Ch\xF4m ch\xF4m, S\u01A1 ri, C\xE0 chua)."),d=!0),n||(b("pr_seller","err_pr_seller","Vui l\xF2ng nh\u1EADp t\xEAn ng\u01B0\u1EDDi b\xE1n ho\u1EB7c h\u1ED9 tr\u1ED3ng."),d=!0),(!a||Number(a)<=0)&&(b("pr_quantity","err_pr_quantity","Kh\u1ED1i l\u01B0\u1EE3ng b\xE1n ph\u1EA3i l\u1EDBn h\u01A1n 0."),d=!0),(!i||Number(i)<0)&&(b("pr_price","err_pr_price","Vui l\xF2ng nh\u1EADp gi\xE1 b\xE1n h\u1EE3p l\u1EC7."),d=!0),d)return;let l=t?Number(t):v.length?Math.max(...v.map(f=>Number(f.id)||0))+1:1;o||(o="BM-"+new Date().getFullYear()+"-"+String(l).padStart(3,"0"));let g={productCode:o,batchCode:c||"L\xD4-"+String(l).padStart(2,"0"),name:e,sellerName:n,ap:document.getElementById("pr_ap").value.trim()||"X\xE3 B\xECnh M\u1EF9",quantity:Number(a),unitLabel:document.getElementById("pr_unitLabel").value.trim()||"kg",price:Number(i),harvestDate:s||new Date().toISOString().slice(0,10),certification:document.getElementById("pr_certification").value,contactName:document.getElementById("pr_contactName").value.trim()||n,contactPhone:document.getElementById("pr_contactPhone").value.trim(),note:document.getElementById("pr_note").value.trim(),image:u,imageUrl:u,status:document.getElementById("pr_status").value,qrCode:`${window.location.origin}${window.location.pathname}#san-pham=${encodeURIComponent(o)}`};$("pr_saveBtn",!0);try{if(t){let f=v.findIndex(V=>V.id===Number(t));v[f]={...v[f],...g}}else{let f=p&&p.role==="grower"?p.username:h?h.user:"admin";v.push({id:l,postedDate:new Date().toISOString().slice(0,10),buyRequests:[],ownerUsername:f,...g})}await Rt(),await T((t?"C\u1EADp nh\u1EADt s\u1EA3n ph\u1EA9m: ":"\u0110\u0103ng b\xE1n s\u1EA3n ph\u1EA9m m\u1EDBi: ")+g.name+" \u2014 b\u1EDFi "+pt()),Ke(),B(),m("\u2705 \u0110\xE3 l\u01B0u s\u1EA3n ph\u1EA9m th\xE0nh c\xF4ng","ok")}catch(f){console.error(f),m("Kh\xF4ng th\u1EC3 l\u01B0u s\u1EA3n ph\u1EA9m: "+(f.message||"L\u1ED7i k\u1EBFt n\u1ED1i"),"warn")}finally{$("pr_saveBtn",!1)}}async function Fa(t){let e=v.find(n=>n.id===t);if(!e||!Qt(e)){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n s\u1EEDa s\u1EA3n ph\u1EA9m n\xE0y","warn");return}e.status=e.status==="available"?"soldout":"available",await Rt(),await T((e.status==="soldout"?"\u0110\xE1nh d\u1EA5u h\u1EBFt h\xE0ng: ":"M\u1EDF b\xE1n l\u1EA1i: ")+e.name+" \u2014 b\u1EDFi "+pt()),B(),m("\u0110\xE3 c\u1EADp nh\u1EADt tr\u1EA1ng th\xE1i s\u1EA3n ph\u1EA9m","ok")}async function Va(t){let e=v.find(a=>a.id===t);if(!e||!Qt(e)){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n x\xF3a s\u1EA3n ph\u1EA9m n\xE0y","warn");return}await J("X\xF3a s\u1EA3n ph\u1EA9m n\xF4ng s\u1EA3n",`B\u1EA1n c\xF3 ch\u1EAFc ch\u1EAFn mu\u1ED1n x\xF3a m\u1EB7t h\xE0ng "${e?.name}" (M\xE3: ${e?.productCode||e?.id})?`,"X\xF3a m\u1EB7t h\xE0ng",!0)&&(v=v.filter(a=>a.id!==t),await Rt(),await T("X\xF3a s\u1EA3n ph\u1EA9m b\xE1n: "+(e?e.name:"")+" \u2014 b\u1EDFi "+pt()),B(),m("\u2705 \u0110\xE3 x\xF3a s\u1EA3n ph\u1EA9m","warn"))}var U=null,te="environment";async function he(){let t=document.getElementById("qrScanOverlay");if(!t)return;t.classList.add("show"),O(t);let e=document.getElementById("qrCameraNotice");e&&(e.style.display="none");let n=document.getElementById("manualProductCode");if(n&&(n.value=""),typeof Html5Qrcode<"u")try{if(U){try{await U.stop()}catch{}try{await U.clear()}catch{}}U=new Html5Qrcode("qrReader"),await U.start({facingMode:te},{fps:10,qrbox:{width:220,height:220}},a=>{Qa(a)},()=>{})}catch(a){console.warn("L\u1ED7i camera scanner:",a),e&&(e.style.display="block",e.innerHTML="\u26A0\uFE0F <strong>Ch\u01B0a b\u1EADt \u0111\u01B0\u1EE3c camera:</strong> B\u1EA1n ch\u01B0a cho ph\xE9p s\u1EED d\u1EE5ng camera ho\u1EB7c thi\u1EBFt b\u1ECB kh\xF4ng c\xF3 camera. H\xE3y b\u1EA5m Cho ph\xE9p tr\xEAn tr\xECnh duy\u1EC7t ho\u1EB7c nh\u1EADp m\xE3 s\u1EA3n ph\u1EA9m b\xEAn d\u01B0\u1EDBi \u0111\u1EC3 tra c\u1EE9u ngay.")}else e&&(e.style.display="block",e.innerHTML="\u2139\uFE0F \u0110ang t\u1EA3i m\xE1y qu\xE9t... N\u1EBFu camera kh\xF4ng m\u1EDF, b\u1EA1n vui l\xF2ng nh\u1EADp m\xE3 s\u1EA3n ph\u1EA9m b\xEAn d\u01B0\u1EDBi.")}async function pe(){let t=document.getElementById("qrScanOverlay");if(t&&t.classList.remove("show"),M(),U){try{await U.stop(),await U.clear()}catch{}U=null}}async function Ra(){te=te==="environment"?"user":"environment",m("\u0110ang chuy\u1EC3n \u0111\u1ED5i camera...","ok"),await he()}function Qa(t){navigator.vibrate&&navigator.vibrate(100),pe();let e=String(t||"").trim();e.includes("#san-pham=")?e=e.split("#san-pham=")[1].split("&")[0]:e.includes("?p=")&&(e=e.split("?p=")[1].split("&")[0]),e=decodeURIComponent(e).trim(),kt(e)}function Ua(){he(),setTimeout(()=>{let t=document.getElementById("manualProductCode");t&&(t.focus(),t.scrollIntoView({behavior:"smooth",block:"center"}))},300)}function ja(){let t=document.getElementById("manualProductCode"),e=(t?.value||"").trim();if(!e){m("Vui l\xF2ng nh\u1EADp m\xE3 s\u1EA3n ph\u1EA9m (VD: BM-2026-001 ho\u1EB7c 1)","warn"),t?.focus();return}pe(),kt(e)}function Ga(t){let e=String(t||"").trim();if(!e)return null;let n=x(e),a=v.find(i=>String(i.productCode||"").trim().toLowerCase()===e.toLowerCase());return a||(a=v.find(i=>String(i.id)===e),a)||(a=v.find(i=>String(i.batchCode||"").trim().toLowerCase()===e.toLowerCase()),a)?a:(a=v.find(i=>{let o=x(i.productCode||""),c=x(i.batchCode||"");return o.includes(n)||c.includes(n)}),a||null)}function Xa(t){let e=v.find(n=>n.id===Number(t));if(!e){ze(t);return}We(e)}function kt(t){let e=Ga(t);if(!e){ze(t);return}We(e)}function ze(t){let e=document.getElementById("productDetailOverlay"),n=document.getElementById("productDetailContent");!e||!n||(n.innerHTML=`
     <div class="detail-status-banner status-notfound">
       <div class="detail-status-icon"><svg class="icon icon-24" style="color:var(--danger);"><use href="#icon-x-circle"/></svg></div>
       <div>
-        <div style="font-size:16px;">KHÔNG TÌM THẤY SẢN PHẨM</div>
-        <div style="font-size:12.5px;font-weight:400;margin-top:2px;">Mã tra cứu: "${esc(searchKey)}"</div>
+        <div style="font-size:16px;">KH\xD4NG T\xCCM TH\u1EA4Y S\u1EA2N PH\u1EA8M</div>
+        <div style="font-size:12.5px;font-weight:400;margin-top:2px;">M\xE3 tra c\u1EE9u: "${r(t)}"</div>
       </div>
     </div>
     <div class="product-detail-card" style="text-align:center;padding:24px 18px;">
       <p style="font-size:14px;color:var(--ink);line-height:1.6;margin:0 0 16px;">
-        Hệ thống Nông nghiệp Bình Mỹ không tìm thấy thông tin sản phẩm khớp với mã bạn vừa quét hoặc nhập.
+        H\u1EC7 th\u1ED1ng N\xF4ng nghi\u1EC7p B\xECnh M\u1EF9 kh\xF4ng t\xECm th\u1EA5y th\xF4ng tin s\u1EA3n ph\u1EA9m kh\u1EDBp v\u1EDBi m\xE3 b\u1EA1n v\u1EEBa qu\xE9t ho\u1EB7c nh\u1EADp.
       </p>
       <div style="background:#FFF9F5;border:1px solid #FFE3D1;border-radius:12px;padding:12px 14px;font-size:13px;color:#B44300;text-align:left;line-height:1.5;margin-bottom:18px;">
-        <strong>Gợi ý cho bạn:</strong><br>
-        • Kiểm tra xem bạn có gõ nhầm chữ/số nào không.<br>
-        • Thử quét lại mã QR trên bao bì dưới ánh sáng rõ hơn.<br>
-        • Hoặc xem danh sách sản phẩm đang bán của xã Bình Mỹ.
+        <strong>G\u1EE3i \xFD cho b\u1EA1n:</strong><br>
+        \u2022 Ki\u1EC3m tra xem b\u1EA1n c\xF3 g\xF5 nh\u1EA7m ch\u1EEF/s\u1ED1 n\xE0o kh\xF4ng.<br>
+        \u2022 Th\u1EED qu\xE9t l\u1EA1i m\xE3 QR tr\xEAn bao b\xEC d\u01B0\u1EDBi \xE1nh s\xE1ng r\xF5 h\u01A1n.<br>
+        \u2022 Ho\u1EB7c xem danh s\xE1ch s\u1EA3n ph\u1EA9m \u0111ang b\xE1n c\u1EE7a x\xE3 B\xECnh M\u1EF9.
       </div>
       <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
         <button type="button" class="btn btn-primary" onclick="closeProductDetail();openQrScanner();">
-          <svg class="icon"><use href="#icon-qr-scan"/></svg>Quét mã khác
+          <svg class="icon"><use href="#icon-qr-scan"/></svg>Qu\xE9t m\xE3 kh\xE1c
         </button>
         <button type="button" class="btn" onclick="closeProductDetail();openManualLookup();">
-          <svg class="icon"><use href="#icon-search"/></svg>Nhập lại mã
+          <svg class="icon"><use href="#icon-search"/></svg>Nh\u1EADp l\u1EA1i m\xE3
         </button>
         <button type="button" class="btn" onclick="closeProductDetail();switchToDauRaProducts();">
-          Xem danh sách sản phẩm
+          Xem danh s\xE1ch s\u1EA3n ph\u1EA9m
         </button>
       </div>
     </div>
-  `;
-  overlay.classList.add('show');
-}
-
-function openProductLightbox(imgUrl, altText){
-  if(!imgUrl) return;
-  const overlay = document.getElementById('imageLightboxOverlay');
-  const img = document.getElementById('lightboxImage');
-  if(!overlay || !img) return;
-  img.src = imgUrl;
-  img.alt = altText || 'Ảnh sản phẩm';
-  overlay.classList.add('show');
-}
-
-function closeImageLightbox(e){
-  if(e && e.target && e.target.id === 'lightboxImage') return;
-  const overlay = document.getElementById('imageLightboxOverlay');
-  if(overlay) overlay.classList.remove('show');
-}
-
-function switchDetailImage(thumbEl, imgUrl){
-  const mainImg = document.getElementById('detailMainImg');
-  if(mainImg){
-    mainImg.src = imgUrl;
-  }
-  document.querySelectorAll('.product-detail-thumb-item').forEach(el => el.classList.remove('active'));
-  if(thumbEl) thumbEl.classList.add('active');
-}
-
-function renderProductDetailModal(p){
-  const overlay = document.getElementById('productDetailOverlay');
-  const content = document.getElementById('productDetailContent');
-  if(!overlay || !content) return;
-
-  const tests = getProductQualityTests(p);
-  const isTested = tests.length > 0 || (p.certification && p.certification !== 'Chưa kiểm định' && p.certification !== 'Chưa có chứng nhận');
-  const isAvailable = p.status === 'available';
-  const img = getProductImage(p);
-  const allImgs = getProductImages(p);
-
-  // Status banner
-  let statusBannerHtml = '';
-  if(!isAvailable){
-    statusBannerHtml = `
-      <div class="detail-status-banner status-soldout">
-        <div class="detail-status-icon"><svg class="icon icon-24"><use href="#icon-info"/></svg></div>
-        <div>
-          <div>SẢN PHẨM ĐÃ HẾT HÀNG</div>
-          <div style="font-size:12.5px;font-weight:400;">Mặt hàng này hiện đã bán hết hoặc tạm ngưng cung cấp.</div>
-        </div>
-      </div>`;
-  }else if(isTested){
-    statusBannerHtml = `
+  `,e.classList.add("show"))}function Ka(t,e){if(!t)return;let n=document.getElementById("imageLightboxOverlay"),a=document.getElementById("lightboxImage");!n||!a||(a.src=t,a.alt=e||"\u1EA2nh s\u1EA3n ph\u1EA9m",n.classList.add("show"))}function Ye(t){if(t&&t.target&&t.target.id==="lightboxImage")return;let e=document.getElementById("imageLightboxOverlay");e&&e.classList.remove("show")}function za(t,e){let n=document.getElementById("detailMainImg");n&&(n.src=e),document.querySelectorAll(".product-detail-thumb-item").forEach(a=>a.classList.remove("active")),t&&t.classList.add("active")}function We(t){let e=document.getElementById("productDetailOverlay"),n=document.getElementById("productDetailContent");if(!e||!n)return;let a=ut(t),i=a.length>0||t.certification&&t.certification!=="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"&&t.certification!=="Ch\u01B0a c\xF3 ch\u1EE9ng nh\u1EADn",o=t.status==="available",c=Nt(t),s=xa(t),u="";o?i?u=`
       <div class="detail-status-banner status-valid">
         <div class="detail-status-icon"><svg class="icon icon-24" style="color:#18682C;"><use href="#icon-check-circle"/></svg></div>
         <div>
-          <div>SẢN PHẨM HỢP LỆ & ĐÃ KIỂM ĐỊNH</div>
-          <div style="font-size:12.5px;font-weight:400;">Nguồn gốc xuất xứ rõ ràng · Đạt tiêu chuẩn an toàn thực phẩm.</div>
+          <div>S\u1EA2N PH\u1EA8M H\u1EE2P L\u1EC6 & \u0110\xC3 KI\u1EC2M \u0110\u1ECANH</div>
+          <div style="font-size:12.5px;font-weight:400;">Ngu\u1ED3n g\u1ED1c xu\u1EA5t x\u1EE9 r\xF5 r\xE0ng \xB7 \u0110\u1EA1t ti\xEAu chu\u1EA9n an to\xE0n th\u1EF1c ph\u1EA9m.</div>
         </div>
-      </div>`;
-  }else{
-    statusBannerHtml = `
+      </div>`:u=`
       <div class="detail-status-banner status-untested">
         <div class="detail-status-icon"><svg class="icon icon-24" style="color:#995B00;"><use href="#icon-alert-triangle"/></svg></div>
         <div>
-          <div>CHƯA CÓ THÔNG TIN KIỂM ĐỊNH</div>
-          <div style="font-size:12.5px;font-weight:400;">Sản phẩm đang bán của hộ dân nhưng chưa hoàn tất xét nghiệm kiểm định.</div>
+          <div>CH\u01AFA C\xD3 TH\xD4NG TIN KI\u1EC2M \u0110\u1ECANH</div>
+          <div style="font-size:12.5px;font-weight:400;">S\u1EA3n ph\u1EA9m \u0111ang b\xE1n c\u1EE7a h\u1ED9 d\xE2n nh\u01B0ng ch\u01B0a ho\xE0n t\u1EA5t x\xE9t nghi\u1EC7m ki\u1EC3m \u0111\u1ECBnh.</div>
         </div>
-      </div>`;
-  }
-
-  // Quality & Testing table
-  let qualityTableHtml = '';
-  if(tests.length > 0){
-    qualityTableHtml = `
+      </div>`:u=`
+      <div class="detail-status-banner status-soldout">
+        <div class="detail-status-icon"><svg class="icon icon-24"><use href="#icon-info"/></svg></div>
+        <div>
+          <div>S\u1EA2N PH\u1EA8M \u0110\xC3 H\u1EBET H\xC0NG</div>
+          <div style="font-size:12.5px;font-weight:400;">M\u1EB7t h\xE0ng n\xE0y hi\u1EC7n \u0111\xE3 b\xE1n h\u1EBFt ho\u1EB7c t\u1EA1m ng\u01B0ng cung c\u1EA5p.</div>
+        </div>
+      </div>`;let d="";a.length>0?d=`
       <div class="detail-quality-box">
         <div class="detail-quality-title">
-          <span><svg class="icon icon-16" style="margin-right:6px;"><use href="#icon-quality"/></svg>Kết quả kiểm nghiệm an toàn thực phẩm (${tests.length} chỉ tiêu)</span>
-          <span class="chip chip-pass">ĐẠT CHUẨN</span>
+          <span><svg class="icon icon-16" style="margin-right:6px;"><use href="#icon-quality"/></svg>K\u1EBFt qu\u1EA3 ki\u1EC3m nghi\u1EC7m an to\xE0n th\u1EF1c ph\u1EA9m (${a.length} ch\u1EC9 ti\xEAu)</span>
+          <span class="chip chip-pass">\u0110\u1EA0T CHU\u1EA8N</span>
         </div>
         <div class="table-wrap">
           <table class="quality-test-table">
             <thead>
               <tr>
-                <th>Chỉ tiêu xét nghiệm</th>
-                <th>Kết quả đo</th>
-                <th>Ngưỡng tối đa</th>
-                <th>Đánh giá</th>
-                <th>Ngày kiểm</th>
+                <th>Ch\u1EC9 ti\xEAu x\xE9t nghi\u1EC7m</th>
+                <th>K\u1EBFt qu\u1EA3 \u0111o</th>
+                <th>Ng\u01B0\u1EE1ng t\u1ED1i \u0111a</th>
+                <th>\u0110\xE1nh gi\xE1</th>
+                <th>Ng\xE0y ki\u1EC3m</th>
               </tr>
             </thead>
             <tbody>
-              ${tests.map(t => `
+              ${a.map(g=>`
                 <tr>
-                  <td><strong>${esc(t.metric)}</strong><br><small style="color:var(--ink-faint);">${esc(t.standard || '')}</small></td>
-                  <td>${esc(t.value)} ${esc(t.unit || '')}</td>
-                  <td>≤ ${esc(t.threshold)} ${esc(t.unit || '')}</td>
-                  <td>${t.result === 'pass' ? '<span class="chip chip-pass">Đạt</span>' : (t.result === 'fail' ? '<span class="chip chip-fail">Không đạt</span>' : '<span class="chip chip-pending">Chờ KQ</span>')}</td>
-                  <td>${esc(t.date || '—')}</td>
+                  <td><strong>${r(g.metric)}</strong><br><small style="color:var(--ink-faint);">${r(g.standard||"")}</small></td>
+                  <td>${r(g.value)} ${r(g.unit||"")}</td>
+                  <td>\u2264 ${r(g.threshold)} ${r(g.unit||"")}</td>
+                  <td>${g.result==="pass"?'<span class="chip chip-pass">\u0110\u1EA1t</span>':g.result==="fail"?'<span class="chip chip-fail">Kh\xF4ng \u0111\u1EA1t</span>':'<span class="chip chip-pending">Ch\u1EDD KQ</span>'}</td>
+                  <td>${r(g.date||"\u2014")}</td>
                 </tr>
-              `).join('')}
+              `).join("")}
             </tbody>
           </table>
         </div>
-      </div>`;
-  }else if(p.certification && p.certification !== 'Chưa kiểm định' && p.certification !== 'Chưa có chứng nhận'){
-    qualityTableHtml = `
+      </div>`:t.certification&&t.certification!=="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"&&t.certification!=="Ch\u01B0a c\xF3 ch\u1EE9ng nh\u1EADn"?d=`
       <div class="detail-quality-box">
         <div class="detail-quality-title">
-          <span><svg class="icon icon-16" style="margin-right:6px;"><use href="#icon-quality"/></svg>Chứng nhận chất lượng: ${esc(p.certification)}</span>
-          <span class="chip chip-pass">ĐÃ CHỨNG NHẬN</span>
+          <span><svg class="icon icon-16" style="margin-right:6px;"><use href="#icon-quality"/></svg>Ch\u1EE9ng nh\u1EADn ch\u1EA5t l\u01B0\u1EE3ng: ${r(t.certification)}</span>
+          <span class="chip chip-pass">\u0110\xC3 CH\u1EE8NG NH\u1EACN</span>
         </div>
         <p style="font-size:13px;color:var(--ink-soft);margin:6px 0 0;">
-          Lô hàng được cấp chứng nhận <strong>${esc(p.certification)}</strong>, tuân thủ đúng quy trình cách ly thuốc BVTV và canh tác an toàn.
+          L\xF4 h\xE0ng \u0111\u01B0\u1EE3c c\u1EA5p ch\u1EE9ng nh\u1EADn <strong>${r(t.certification)}</strong>, tu\xE2n th\u1EE7 \u0111\xFAng quy tr\xECnh c\xE1ch ly thu\u1ED1c BVTV v\xE0 canh t\xE1c an to\xE0n.
         </p>
-      </div>`;
-  }else{
-    qualityTableHtml = `
+      </div>`:d=`
       <div class="detail-quality-box" style="background:#FAF8F5;">
         <div class="detail-quality-title" style="color:#A06000;">
-          <span><svg class="icon icon-16" style="margin-right:6px;"><use href="#icon-alert-triangle"/></svg>Chưa có thông tin kiểm định</span>
+          <span><svg class="icon icon-16" style="margin-right:6px;"><use href="#icon-alert-triangle"/></svg>Ch\u01B0a c\xF3 th\xF4ng tin ki\u1EC3m \u0111\u1ECBnh</span>
         </div>
         <p style="font-size:13px;color:var(--ink-soft);margin:4px 0 0;">
-          Lô sản phẩm này chưa gửi mẫu xét nghiệm dư lượng nitrat / kim loại nặng. Khách mua có thể liên hệ trực tiếp chủ hộ để hỏi thêm về quy trình chăm bón.
+          L\xF4 s\u1EA3n ph\u1EA9m n\xE0y ch\u01B0a g\u1EEDi m\u1EABu x\xE9t nghi\u1EC7m d\u01B0 l\u01B0\u1EE3ng nitrat / kim lo\u1EA1i n\u1EB7ng. Kh\xE1ch mua c\xF3 th\u1EC3 li\xEAn h\u1EC7 tr\u1EF1c ti\u1EBFp ch\u1EE7 h\u1ED9 \u0111\u1EC3 h\u1ECFi th\xEAm v\u1EC1 quy tr\xECnh ch\u0103m b\xF3n.
         </p>
-      </div>`;
-  }
-
-  // Thumbnails if multiple images
-  let thumbsHtml = '';
-  if(allImgs.length > 1){
-    thumbsHtml = `
+      </div>`;let l="";s.length>1&&(l=`
       <div class="product-detail-thumbs">
-        ${allImgs.map((im, i) => `
+        ${s.map((g,f)=>`
           <img
-            src="${esc(im)}"
-            alt="Ảnh thu nhỏ ${i+1}"
-            class="product-detail-thumb-item ${i === 0 ? 'active' : ''}"
-            onclick="switchDetailImage(this, '${esc(im)}')"
+            src="${r(g)}"
+            alt="\u1EA2nh thu nh\u1ECF ${f+1}"
+            class="product-detail-thumb-item ${f===0?"active":""}"
+            onclick="switchDetailImage(this, '${escAttr(g)}')"
             loading="lazy">
-        `).join('')}
-      </div>`;
-  }
-
-  content.innerHTML = `
-    ${statusBannerHtml}
+        `).join("")}
+      </div>`),n.innerHTML=`
+    ${u}
 
     <div class="product-detail-header-grid">
       <!-- Media Column -->
       <div class="product-detail-media-wrap">
-        <div class="product-detail-main-img-box" onclick="${img ? `openProductLightbox('${esc(img)}', '${esc(p.name)}')` : ''}" title="${img ? 'Bấm xem ảnh lớn' : ''}">
-          ${img ? `
-            <img id="detailMainImg" src="${esc(img)}" alt="${esc(p.name)}" class="product-detail-main-img" loading="lazy" decoding="async">
+        <div class="product-detail-main-img-box" onclick="${c?`openProductLightbox('${escAttr(c)}', '${escAttr(t.name)}')`:""}" title="${c?"B\u1EA5m xem \u1EA3nh l\u1EDBn":""}">
+          ${c?`
+            <img id="detailMainImg" src="${r(c)}" alt="${r(t.name)}" class="product-detail-main-img" loading="lazy" decoding="async">
             <div class="detail-img-zoom-hint">
-              <svg class="icon icon-12"><use href="#icon-eye"/></svg> Phóng to ảnh
+              <svg class="icon icon-12"><use href="#icon-eye"/></svg> Ph\xF3ng to \u1EA3nh
             </div>
-          ` : `
+          `:`
             <div class="product-image-placeholder" style="aspect-ratio:4/3;border-radius:14px;">
-              <span style="font-size:48px;">🌱</span>
-              <small style="font-size:13px;">Chưa có ảnh sản phẩm</small>
+              <span style="font-size:48px;">\u{1F331}</span>
+              <small style="font-size:13px;">Ch\u01B0a c\xF3 \u1EA3nh s\u1EA3n ph\u1EA9m</small>
             </div>
           `}
         </div>
-        ${thumbsHtml}
+        ${l}
       </div>
 
       <!-- Hero Info Column -->
       <div class="product-detail-info-col">
-        <h2 class="detail-title-hero">${esc(p.name)}</h2>
+        <h2 class="detail-title-hero">${r(t.name)}</h2>
         
         <div class="detail-price-hero">
-          ${money(p.price)} đ <span class="detail-price-unit">/ ${esc(p.unitLabel || 'kg')}</span>
+          ${_(t.price)} \u0111 <span class="detail-price-unit">/ ${r(t.unitLabel||"kg")}</span>
         </div>
 
         <div class="detail-badge-list">
-          ${isAvailable ? '<span class="dt-badge dt-badge-available">✓ Đang còn hàng</span>' : '<span class="dt-badge dt-badge-soldout">Hết hàng</span>'}
-          ${p.certification && p.certification !== 'Chưa kiểm định' && p.certification !== 'Chưa có chứng nhận' ? `<span class="dt-badge dt-badge-vietgap">${esc(p.certification)}</span>` : ''}
-          ${isTested ? '<span class="dt-badge dt-badge-tested">✓ Đã kiểm định</span>' : '<span class="dt-badge dt-badge-untested">Chưa kiểm định</span>'}
-          ${p.productCode || p.qrCode ? '<span class="dt-badge dt-badge-qr-yes"><svg class="icon icon-12"><use href="#icon-qr-code"/></svg> Có truy xuất nguồn gốc</span>' : ''}
+          ${o?'<span class="dt-badge dt-badge-available">\u2713 \u0110ang c\xF2n h\xE0ng</span>':'<span class="dt-badge dt-badge-soldout">H\u1EBFt h\xE0ng</span>'}
+          ${t.certification&&t.certification!=="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"&&t.certification!=="Ch\u01B0a c\xF3 ch\u1EE9ng nh\u1EADn"?`<span class="dt-badge dt-badge-vietgap">${r(t.certification)}</span>`:""}
+          ${i?'<span class="dt-badge dt-badge-tested">\u2713 \u0110\xE3 ki\u1EC3m \u0111\u1ECBnh</span>':'<span class="dt-badge dt-badge-untested">Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh</span>'}
+          ${t.productCode||t.qrCode?'<span class="dt-badge dt-badge-qr-yes"><svg class="icon icon-12"><use href="#icon-qr-code"/></svg> C\xF3 truy xu\u1EA5t ngu\u1ED3n g\u1ED1c</span>':""}
         </div>
 
         <div class="detail-quick-meta">
           <div class="detail-meta-line">
-            <span>📦 Số lượng sẵn có:</span>
-            <strong>${isAvailable ? `${esc(p.quantity)} ${esc(p.unitLabel || 'kg')}` : 'Đã bán hết'}</strong>
+            <span>\u{1F4E6} S\u1ED1 l\u01B0\u1EE3ng s\u1EB5n c\xF3:</span>
+            <strong>${o?`${r(t.quantity)} ${r(t.unitLabel||"kg")}`:"\u0110\xE3 b\xE1n h\u1EBFt"}</strong>
           </div>
           <div class="detail-meta-line">
-            <span>📍 Khu vực trồng:</span>
-            <strong>${esc(p.ap || 'Xã Bình Mỹ, Củ Chi')}</strong>
+            <span>\u{1F4CD} Khu v\u1EF1c tr\u1ED3ng:</span>
+            <strong>${r(t.ap||"X\xE3 B\xECnh M\u1EF9, C\u1EE7 Chi")}</strong>
           </div>
           <div class="detail-meta-line">
-            <span>👨‍🌾 Người bán / Chủ hộ:</span>
-            <strong>${esc(p.sellerName || 'Hộ trồng Bình Mỹ')}</strong>
+            <span>\u{1F468}\u200D\u{1F33E} Ng\u01B0\u1EDDi b\xE1n / Ch\u1EE7 h\u1ED9:</span>
+            <strong>${r(t.sellerName||"H\u1ED9 tr\u1ED3ng B\xECnh M\u1EF9")}</strong>
           </div>
           <div class="detail-meta-line">
-            <span>📞 Điện thoại liên hệ:</span>
-            <strong><a href="tel:${esc(p.contactPhone)}" style="color:var(--river-deep);text-decoration:underline;">${esc(p.contactPhone) || 'Chưa cập nhật'}</a></strong>
+            <span>\u{1F4DE} \u0110i\u1EC7n tho\u1EA1i li\xEAn h\u1EC7:</span>
+            <strong><a href="tel:${r(t.contactPhone)}" style="color:var(--river-deep);text-decoration:underline;">${r(t.contactPhone)||"Ch\u01B0a c\u1EADp nh\u1EADt"}</a></strong>
           </div>
         </div>
 
         <div class="detail-hero-actions">
-          <button type="button" class="btn btn-primary btn-detail-buy" onclick="closeProductDetail();openBuyForm(${p.id});" ${!isAvailable ? 'disabled' : ''}>
-            <svg class="icon icon-18"><use href="#icon-phone"/></svg> 🛒 Liên hệ mua ngay
+          <button type="button" class="btn btn-primary btn-detail-buy" onclick="closeProductDetail();openBuyForm(${t.id});" ${o?"":"disabled"}>
+            <svg class="icon icon-18"><use href="#icon-phone"/></svg> \u{1F6D2} Li\xEAn h\u1EC7 mua ngay
           </button>
-          <button type="button" class="btn btn-detail-qr" onclick="closeProductDetail();openProductQrModal(${p.id});">
+          <button type="button" class="btn btn-detail-qr" onclick="closeProductDetail();openProductQrModal(${t.id});">
             <svg class="icon icon-16"><use href="#icon-qr-code"/></svg> In tem QR
           </button>
         </div>
       </div>
     </div>
 
-    <!-- Thông tin chi tiết kỹ thuật -->
+    <!-- Th\xF4ng tin chi ti\u1EBFt k\u1EF9 thu\u1EADt -->
     <div class="product-detail-card" style="margin-top:0;">
       <div style="font-weight:700;font-size:15px;color:var(--ink);margin-bottom:12px;border-bottom:1px solid var(--line);padding-bottom:6px;">
-        Thông tin chi tiết sản phẩm
+        Th\xF4ng tin chi ti\u1EBFt s\u1EA3n ph\u1EA9m
       </div>
       <div class="detail-grid">
         <div class="detail-grid-item">
-          <span class="detail-lbl">Mã sản phẩm</span>
-          <span class="detail-val" style="color:var(--paddy-deep);font-weight:700;">${esc(p.productCode || 'BM-SP-' + p.id)}</span>
+          <span class="detail-lbl">M\xE3 s\u1EA3n ph\u1EA9m</span>
+          <span class="detail-val" style="color:var(--paddy-deep);font-weight:700;">${r(t.productCode||"BM-SP-"+t.id)}</span>
         </div>
         <div class="detail-grid-item">
-          <span class="detail-lbl">Số lô / Lô thu hoạch</span>
-          <span class="detail-val">${esc(p.batchCode || 'LÔ-01')}</span>
+          <span class="detail-lbl">S\u1ED1 l\xF4 / L\xF4 thu ho\u1EA1ch</span>
+          <span class="detail-val">${r(t.batchCode||"L\xD4-01")}</span>
         </div>
         <div class="detail-grid-item">
-          <span class="detail-lbl">Ngày thu hoạch / Ngày hái</span>
-          <span class="detail-val">${esc(p.harvestDate || p.postedDate || 'Trong ngày')}</span>
+          <span class="detail-lbl">Ng\xE0y thu ho\u1EA1ch / Ng\xE0y h\xE1i</span>
+          <span class="detail-val">${r(t.harvestDate||t.postedDate||"Trong ng\xE0y")}</span>
         </div>
         <div class="detail-grid-item">
-          <span class="detail-lbl">Người phụ trách liên hệ</span>
-          <span class="detail-val">${esc(p.contactName || p.sellerName || 'Chủ hộ')}</span>
+          <span class="detail-lbl">Ng\u01B0\u1EDDi ph\u1EE5 tr\xE1ch li\xEAn h\u1EC7</span>
+          <span class="detail-val">${r(t.contactName||t.sellerName||"Ch\u1EE7 h\u1ED9")}</span>
         </div>
       </div>
-      ${p.note ? `<div style="margin-top:12px;padding:10px 12px;background:#FAFBF9;border:1px dashed var(--line);border-radius:8px;font-size:13px;color:var(--ink-soft);"><strong>📝 Ghi chú:</strong> ${esc(p.note)}</div>` : ''}
+      ${t.note?`<div style="margin-top:12px;padding:10px 12px;background:#FAFBF9;border:1px dashed var(--line);border-radius:8px;font-size:13px;color:var(--ink-soft);"><strong>\u{1F4DD} Ghi ch\xFA:</strong> ${r(t.note)}</div>`:""}
     </div>
 
-    <!-- Lịch sử vòng đời nông sản -->
+    <!-- L\u1ECBch s\u1EED v\xF2ng \u0111\u1EDDi n\xF4ng s\u1EA3n -->
     <div class="product-timeline-box" style="margin-top:16px;">
-      <div class="product-timeline-title">Lịch sử vòng đời nông sản</div>
+      <div class="product-timeline-title">L\u1ECBch s\u1EED v\xF2ng \u0111\u1EDDi n\xF4ng s\u1EA3n</div>
       <div class="timeline-steps">
         <div class="timeline-step done">
           <div class="timeline-dot"><svg class="icon icon-16"><use href="#icon-sprout"/></svg></div>
-          <div class="timeline-label">Tạo sản phẩm</div>
+          <div class="timeline-label">T\u1EA1o s\u1EA3n ph\u1EA9m</div>
         </div>
         <div class="timeline-step done">
           <div class="timeline-dot"><svg class="icon icon-16"><use href="#icon-sprout"/></svg></div>
-          <div class="timeline-label">Canh tác sạch</div>
+          <div class="timeline-label">Canh t\xE1c s\u1EA1ch</div>
         </div>
-        <div class="timeline-step ${isTested ? 'done' : 'active'}">
+        <div class="timeline-step ${i?"done":"active"}">
           <div class="timeline-dot"><svg class="icon icon-16"><use href="#icon-quality"/></svg></div>
-          <div class="timeline-label">${isTested ? 'Đã kiểm định' : 'Kiểm định'}</div>
+          <div class="timeline-label">${i?"\u0110\xE3 ki\u1EC3m \u0111\u1ECBnh":"Ki\u1EC3m \u0111\u1ECBnh"}</div>
         </div>
         <div class="timeline-step done">
           <div class="timeline-dot"><svg class="icon icon-16"><use href="#icon-package"/></svg></div>
-          <div class="timeline-label">Thu hoạch</div>
+          <div class="timeline-label">Thu ho\u1EA1ch</div>
         </div>
-        <div class="timeline-step ${isAvailable ? 'active' : 'done'}">
+        <div class="timeline-step ${o?"active":"done"}">
           <div class="timeline-dot"><svg class="icon icon-16"><use href="#icon-products"/></svg></div>
-          <div class="timeline-label">${isAvailable ? 'Đang bán' : 'Đã bán hết'}</div>
+          <div class="timeline-label">${o?"\u0110ang b\xE1n":"\u0110\xE3 b\xE1n h\u1EBFt"}</div>
         </div>
       </div>
     </div>
 
-    <!-- Chi tiết kiểm định -->
-    ${qualityTableHtml}
+    <!-- Chi ti\u1EBFt ki\u1EC3m \u0111\u1ECBnh -->
+    ${d}
 
     <div class="modal-actions" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-top:16px;">
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button type="button" class="btn btn-primary" onclick="closeProductDetail();openBuyForm(${p.id});" ${!isAvailable ? 'disabled' : ''}>
-          <svg class="icon icon-16"><use href="#icon-phone"/></svg> Liên hệ mua
+        <button type="button" class="btn btn-primary" onclick="closeProductDetail();openBuyForm(${t.id});" ${o?"":"disabled"}>
+          <svg class="icon icon-16"><use href="#icon-phone"/></svg> Li\xEAn h\u1EC7 mua
         </button>
-        <button type="button" class="btn" onclick="closeProductDetail();openProductQrModal(${p.id});">
+        <button type="button" class="btn" onclick="closeProductDetail();openProductQrModal(${t.id});">
           <svg class="icon"><use href="#icon-qr-code"/></svg> In tem QR
         </button>
       </div>
       <div style="display:flex;gap:8px;">
         <button type="button" class="btn" onclick="closeProductDetail();openQrScanner();">
-          <svg class="icon"><use href="#icon-qr-scan"/></svg> Quét mã khác
+          <svg class="icon"><use href="#icon-qr-scan"/></svg> Qu\xE9t m\xE3 kh\xE1c
         </button>
-        <button type="button" class="btn" onclick="closeProductDetail();">Đóng lại</button>
+        <button type="button" class="btn" onclick="closeProductDetail();">\u0110\xF3ng l\u1EA1i</button>
       </div>
     </div>
 
     <!-- Mobile Sticky Action Bar -->
     <div class="mobile-detail-sticky-bar">
       <div class="sticky-bar-price">
-        ${money(p.price)} đ<small>/${esc(p.unitLabel || 'kg')}</small>
+        ${_(t.price)} \u0111<small>/${r(t.unitLabel||"kg")}</small>
       </div>
-      <button type="button" class="btn btn-primary btn-sticky-buy" onclick="closeProductDetail();openBuyForm(${p.id});" ${!isAvailable ? 'disabled' : ''}>
-        <svg class="icon icon-16"><use href="#icon-phone"/></svg> Liên hệ mua
+      <button type="button" class="btn btn-primary btn-sticky-buy" onclick="closeProductDetail();openBuyForm(${t.id});" ${o?"":"disabled"}>
+        <svg class="icon icon-16"><use href="#icon-phone"/></svg> Li\xEAn h\u1EC7 mua
       </button>
     </div>
-  `;
-  overlay.classList.add('show');
-}
-
-function closeProductDetail(){
-  const overlay = document.getElementById('productDetailOverlay');
-  if(overlay) overlay.classList.remove('show');
-}
-
-/* ============ TẠO, XEM, IN VÀ TẢI MÃ QR SẢN PHẨM ============ */
-let currentQrProduct = null;
-
-function openProductQrModal(id){
-  const p = products.find(x => x.id === Number(id));
-  if(!p) return;
-  currentQrProduct = p;
-
-  if(!p.productCode){
-    p.productCode = 'BM-' + new Date().getFullYear() + '-' + String(p.id).padStart(3, '0');
-  }
-  p.qrCode = `${window.location.origin}${window.location.pathname}#san-pham=${encodeURIComponent(p.productCode)}`;
-
-  const overlay = document.getElementById('productQrOverlay');
-  if(!overlay) return;
-
-  document.getElementById('qrStampProductName').textContent = p.name;
-  document.getElementById('qrStampCode').textContent = p.productCode;
-  document.getElementById('qrStampSeller').textContent = p.sellerName || 'Hộ trồng Bình Mỹ';
-  document.getElementById('qrStampAp').textContent = p.ap || 'Xã Bình Mỹ';
-  
-  const certRow = document.getElementById('qrStampCertRow');
-  const certSpan = document.getElementById('qrStampCert');
-  if(p.certification && p.certification !== 'Chưa kiểm định'){
-    certSpan.textContent = p.certification;
-    certRow.style.display = 'block';
-  }else{
-    certRow.style.display = 'none';
-  }
-
-  const canvasWrap = document.getElementById('productQrCanvas');
-  canvasWrap.innerHTML = '';
-
-  const qrUrl = p.qrCode;
-
-  // Sử dụng thư viện QRCode nếu có sẵn
-  if(typeof QRCode !== 'undefined'){
-    try{
-      new QRCode(canvasWrap, {
-        text: qrUrl,
-        width: 170,
-        height: 170,
-        colorDark: "#11421A",
-        colorLight: "#FFFFFF",
-        correctLevel: QRCode.CorrectLevel.H
-      });
-    }catch(e){
-      console.warn("Lỗi render QRCode:", e);
-      renderFallbackQrImg(canvasWrap, qrUrl);
-    }
-  }else{
-    renderFallbackQrImg(canvasWrap, qrUrl);
-  }
-
-  overlay.classList.add('show');
-}
-
-function renderFallbackQrImg(wrap, text){
-  const imgUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(text)}`;
-  wrap.innerHTML = `<img src="${imgUrl}" alt="Mã QR nông sản Bình Mỹ" style="max-width:180px;height:auto;display:block;margin:0 auto;">`;
-}
-
-function closeProductQrModal(){
-  const overlay = document.getElementById('productQrOverlay');
-  if(overlay) overlay.classList.remove('show');
-  currentQrProduct = null;
-}
-
-function downloadProductQr(){
-  if(!currentQrProduct) return;
-  const canvasWrap = document.getElementById('productQrCanvas');
-  const canvas = canvasWrap?.querySelector('canvas');
-  const img = canvasWrap?.querySelector('img');
-
-  let dataUrl = '';
-  if(canvas){
-    dataUrl = canvas.toDataURL('image/png');
-  }else if(img && img.src.startsWith('data:')){
-    dataUrl = img.src;
-  }else if(img){
-    dataUrl = img.src;
-  }
-
-  if(dataUrl){
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = `QR_${currentQrProduct.productCode || currentQrProduct.id}.png`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    toast('✅ Đã tải ảnh mã QR về máy thành công', 'ok');
-  }else{
-    toast('Đang tạo ảnh QR, bạn vui lòng thử lại sau 1 giây', 'warn');
-  }
-}
-
-function printProductQr(){
-  window.print();
-}
-
-/* ============ HƯỚNG DẪN DỄ DÙNG & ĐIỀU HƯỚNG NHANH ============ */
-function openHelpModal(){
-  const overlay = document.getElementById('helpModalOverlay');
-  if(overlay) overlay.classList.add('show');
-}
-
-function closeHelpModal(){
-  const overlay = document.getElementById('helpModalOverlay');
-  if(overlay) overlay.classList.remove('show');
-}
-
-function switchToDauRaProducts(){
-  showView('tin-thu-mua');
-  const tabBtn = document.querySelector('#dauRaTabs2 button[data-subtab="dr2-products"]');
-  if(tabBtn) tabBtn.click();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-function switchToDauRaDemand(){
-  showView('tin-thu-mua');
-  const tabBtn = document.querySelector('#dauRaTabs2 button[data-subtab="dr2-demand"]');
-  if(tabBtn) tabBtn.click();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-function switchToQuality(){
-  showView('kiem-dinh');
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-function switchToAI(){
-  showView('tro-ly-ai');
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-// Kiểm tra liên kết sâu URL để tự động mở sản phẩm khi người dùng quét QR từ ứng dụng ngoài
-function checkDeepLinkProduct(){
-  const hash = location.hash || '';
-  if(hash.startsWith('#san-pham=')){
-    const code = decodeURIComponent(hash.slice(10)).trim();
-    if(code){
-      showProductDetailByCode(code);
-      return;
-    }
-  }
-  const params = new URLSearchParams(location.search);
-  const pCode = params.get('p');
-  if(pCode){
-    showProductDetailByCode(pCode.trim());
-  }
-}
-
-
-function openBuyForm(id){
-  const p = products.find(x => x.id === id);
-  if(!p) return;
-  clearFieldErrors('buyOverlay');
-  document.getElementById('by_productId').value = id;
-  document.getElementById('buyForTitle').textContent = 'Liên hệ mua "' + p.name + '" — Người bán: ' + (p.sellerName || '—');
-  ['by_name','by_phone','by_quantity','by_note'].forEach(fid => document.getElementById(fid).value = '');
-  if(currentPersonUser && currentPersonUser.role === 'buyer'){
-    document.getElementById('by_name').value = currentPersonUser.displayName;
-    document.getElementById('by_phone').value = currentPersonUser.phone || '';
-  }
-  document.getElementById('buyOverlay').classList.add('show');
-}
-
-function closeBuyForm(){
-  document.getElementById('buyOverlay').classList.remove('show');
-  clearFieldErrors('buyOverlay');
-}
-
-async function submitBuyRequest(){
-  clearFieldErrors('buyOverlay');
-  const id = Number(document.getElementById('by_productId').value);
-  const name = document.getElementById('by_name').value.trim();
-  const phone = document.getElementById('by_phone').value.trim();
-
-  let hasErr = false;
-  if(!name){
-    setFieldError('by_name', 'err_by_name', 'Vui lòng nhập tên bạn hoặc tên đơn vị mua.');
-    hasErr = true;
-  }
-  if(!phone || !/^[0-9+\s\-()]{8,15}$/.test(phone)){
-    setFieldError('by_phone', 'err_by_phone', 'Vui lòng nhập số điện thoại hợp lệ.');
-    hasErr = true;
-  }
-  if(hasErr) return;
-
-  const payload = {
-    productId: id,
-    name,
-    phone,
-    quantity: document.getElementById('by_quantity').value.trim(),
-    note: document.getElementById('by_note').value.trim()
-  };
-
-  setBtnLoading('btnSubmitBuy', true);
-  try{
-    try{
-      await httpsCallable(functions, 'submitBuyRequest')(payload);
-    }catch(cfErr){
-      // Chế độ dự phòng khi backend Cloud Function chưa kết nối
-      const targetProduct = products.find(p => p.id === id);
-      if(targetProduct){
-        if(!targetProduct.buyRequests) targetProduct.buyRequests = [];
-        targetProduct.buyRequests.push({
-          name: payload.name,
-          phone: payload.phone,
-          quantity: payload.quantity,
-          note: payload.note,
-          requestedAt: new Date().toISOString()
-        });
-        await saveProducts();
-      }
-    }
-    closeBuyForm();
-    renderAll();
-    toast('Đã gửi yêu cầu mua, người bán sẽ liên hệ lại với bạn', 'ok');
-  }catch(e){
-    console.error('Lỗi gửi yêu cầu mua:', e);
-    toast('Không gửi được yêu cầu: ' + (e.message || ''), 'warn');
-  }finally{
-    setBtnLoading('btnSubmitBuy', false);
-  }
-}
-
-/* ============ Quản lý hộ trồng & Quy hoạch xã ============ */
-function apOptionsHtml(selected){
-  const aps = Array.from(new Set(households.map(h => h.ap))).sort();
-  return aps.map(ap => `<option value="${esc(ap)}" ${ap === selected ? 'selected' : ''}>${esc(ap)}</option>`).join('');
-}
-
-function sortedHouseholds(list){
-  if(!hhSortKey) return list;
-  const arr = [...list];
-  arr.sort((a, b) => {
-    let av = a[hhSortKey], bv = b[hhSortKey];
-    if(typeof av === 'string' || typeof bv === 'string'){
-      av = (av == null ? '' : String(av)).toLowerCase();
-      bv = (bv == null ? '' : String(bv)).toLowerCase();
-      return av.localeCompare(bv) * hhSortDir;
-    }
-    return ((av || 0) - (bv || 0)) * hhSortDir;
-  });
-  return arr;
-}
-
-function renderHouseholds(){
-  const filterEl = document.getElementById('filterAp');
-  if(filterEl){
-    const current = filterEl.value || 'all';
-    filterEl.innerHTML = `<option value="all">Tất cả các ấp</option>` + apOptionsHtml(current === 'all' ? null : current);
-    filterEl.value = Array.from(filterEl.options).some(o => o.value === current) ? current : 'all';
-  }
-
-  const filter = filterEl?.value || 'all';
-  const q = (document.getElementById('searchHh')?.value || '').trim().toLowerCase();
-  let list = filter === 'all' ? households : households.filter(h => h.ap === filter);
-  if(q){
-    list = list.filter(h =>
-      (h.name || '').toLowerCase().includes(q) ||
-      (h.crop || '').toLowerCase().includes(q) ||
-      (h.note || '').toLowerCase().includes(q)
-    );
-  }
-  list = sortedHouseholds(list);
-
-  const body = document.getElementById('hhTableBody');
-  if(!body) return;
-  if(list.length === 0){
-    body.innerHTML = emptyRow(8, 'Không tìm thấy hộ trồng phù hợp.');
-    return;
-  }
-  body.innerHTML = list.map(h => `
+  `,e.classList.add("show"),O(e)}function Je(){let t=document.getElementById("productDetailOverlay");t&&t.classList.remove("show"),M()}var It=null;function Ya(t){let e=v.find(s=>s.id===Number(t));if(!e)return;It=e,e.productCode||(e.productCode="BM-"+new Date().getFullYear()+"-"+String(e.id).padStart(3,"0")),e.qrCode=`${window.location.origin}${window.location.pathname}#san-pham=${encodeURIComponent(e.productCode)}`;let n=document.getElementById("productQrOverlay");if(!n)return;document.getElementById("qrStampProductName").textContent=e.name,document.getElementById("qrStampCode").textContent=e.productCode,document.getElementById("qrStampSeller").textContent=e.sellerName||"H\u1ED9 tr\u1ED3ng B\xECnh M\u1EF9",document.getElementById("qrStampAp").textContent=e.ap||"X\xE3 B\xECnh M\u1EF9";let a=document.getElementById("qrStampCertRow"),i=document.getElementById("qrStampCert");e.certification&&e.certification!=="Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"?(i.textContent=e.certification,a.style.display="block"):a.style.display="none";let o=document.getElementById("productQrCanvas");o.innerHTML="";let c=e.qrCode;if(typeof QRCode<"u")try{new QRCode(o,{text:c,width:170,height:170,colorDark:"#11421A",colorLight:"#FFFFFF",correctLevel:QRCode.CorrectLevel.H})}catch(s){console.warn("L\u1ED7i render QRCode:",s),Ce(o,c)}else Ce(o,c);n.classList.add("show"),O(n)}function Ce(t,e){let n=`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(e)}`;t.innerHTML=`<img src="${n}" alt="M\xE3 QR n\xF4ng s\u1EA3n B\xECnh M\u1EF9" style="max-width:180px;height:auto;display:block;margin:0 auto;">`}function Ze(){let t=document.getElementById("productQrOverlay");t&&t.classList.remove("show"),It=null,M()}function Wa(){if(!It)return;let t=document.getElementById("productQrCanvas"),e=t?.querySelector("canvas"),n=t?.querySelector("img"),a="";if(e?a=e.toDataURL("image/png"):(n&&n.src.startsWith("data:")||n)&&(a=n.src),a){let i=document.createElement("a");i.href=a,i.download=`QR_${It.productCode||It.id}.png`,document.body.appendChild(i),i.click(),document.body.removeChild(i),m("\u2705 \u0110\xE3 t\u1EA3i \u1EA3nh m\xE3 QR v\u1EC1 m\xE1y th\xE0nh c\xF4ng","ok")}else m("\u0110ang t\u1EA1o \u1EA3nh QR, b\u1EA1n vui l\xF2ng th\u1EED l\u1EA1i sau 1 gi\xE2y","warn")}function Ja(){window.print()}function Za(){let t=document.getElementById("helpModalOverlay");t&&t.classList.add("show")}function to(){let t=document.getElementById("helpModalOverlay");t&&t.classList.remove("show")}function eo(){X("tin-thu-mua");let t=document.querySelector('#dauRaTabs2 button[data-subtab="dr2-products"]');t&&t.click(),window.scrollTo({top:0,behavior:"smooth"})}function no(){X("tin-thu-mua");let t=document.querySelector('#dauRaTabs2 button[data-subtab="dr2-demand"]');t&&t.click(),window.scrollTo({top:0,behavior:"smooth"})}function ao(){X("kiem-dinh"),window.scrollTo({top:0,behavior:"smooth"})}function oo(){X("tro-ly-ai"),window.scrollTo({top:0,behavior:"smooth"})}function tn(){let t=location.hash||"";if(t.startsWith("#san-pham=")){let a=decodeURIComponent(t.slice(10)).trim();if(a){kt(a);return}}let n=new URLSearchParams(location.search).get("p");n&&kt(n.trim())}function io(t){let e=v.find(n=>n.id===t);e&&(w("buyOverlay"),document.getElementById("by_productId").value=t,document.getElementById("buyForTitle").textContent='Li\xEAn h\u1EC7 mua "'+e.name+'" \u2014 Ng\u01B0\u1EDDi b\xE1n: '+(e.sellerName||"\u2014"),["by_name","by_phone","by_quantity","by_note"].forEach(n=>document.getElementById(n).value=""),p&&p.role==="buyer"&&(document.getElementById("by_name").value=p.displayName,document.getElementById("by_phone").value=p.phone||""),document.getElementById("buyOverlay").classList.add("show"),O(document.getElementById("buyOverlay")))}function en(){document.getElementById("buyOverlay").classList.remove("show"),w("buyOverlay"),M()}async function co(){w("buyOverlay");let t=Number(document.getElementById("by_productId").value),e=document.getElementById("by_name").value.trim(),n=document.getElementById("by_phone").value.trim(),a=!1;if(e||(b("by_name","err_by_name","Vui l\xF2ng nh\u1EADp t\xEAn b\u1EA1n ho\u1EB7c t\xEAn \u0111\u01A1n v\u1ECB mua."),a=!0),(!n||!/^[0-9+\s\-()]{8,15}$/.test(n))&&(b("by_phone","err_by_phone","Vui l\xF2ng nh\u1EADp s\u1ED1 \u0111i\u1EC7n tho\u1EA1i h\u1EE3p l\u1EC7."),a=!0),a)return;let i={productId:t,name:e,phone:n,quantity:document.getElementById("by_quantity").value.trim(),note:document.getElementById("by_note").value.trim()};$("btnSubmitBuy",!0);try{try{await ae(ie,"submitBuyRequest")(i)}catch{let c=v.find(s=>s.id===t);c&&(c.buyRequests||(c.buyRequests=[]),c.buyRequests.push({name:i.name,phone:i.phone,quantity:i.quantity,note:i.note,requestedAt:new Date().toISOString()}),await Rt())}en(),B(),m("\u0110\xE3 g\u1EEDi y\xEAu c\u1EA7u mua, ng\u01B0\u1EDDi b\xE1n s\u1EBD li\xEAn h\u1EC7 l\u1EA1i v\u1EDBi b\u1EA1n","ok")}catch(o){console.error("L\u1ED7i g\u1EEDi y\xEAu c\u1EA7u mua:",o),m("Kh\xF4ng g\u1EEDi \u0111\u01B0\u1EE3c y\xEAu c\u1EA7u: "+(o.message||""),"warn")}finally{$("btnSubmitBuy",!1)}}function so(t){return Array.from(new Set(k.map(n=>n.ap))).sort().map(n=>`<option value="${r(n)}" ${n===t?"selected":""}>${r(n)}</option>`).join("")}function ro(t){if(!rt)return t;let e=[...t];return e.sort((n,a)=>{let i=n[rt],o=a[rt];return typeof i=="string"||typeof o=="string"?(i=(i==null?"":String(i)).toLowerCase(),o=(o==null?"":String(o)).toLowerCase(),i.localeCompare(o)*lt):((i||0)-(o||0))*lt}),e}function Pt(){let t=document.getElementById("filterAp");if(t){let o=t.value||"all";t.innerHTML='<option value="all">T\u1EA5t c\u1EA3 c\xE1c \u1EA5p</option>'+so(o==="all"?null:o),t.value=Array.from(t.options).some(c=>c.value===o)?o:"all"}let e=t?.value||"all",n=(document.getElementById("searchHh")?.value||"").trim().toLowerCase(),a=e==="all"?k:k.filter(o=>o.ap===e);n&&(a=a.filter(o=>(o.name||"").toLowerCase().includes(n)||(o.crop||"").toLowerCase().includes(n)||(o.note||"").toLowerCase().includes(n))),a=ro(a);let i=document.getElementById("hhTableBody");if(i){if(a.length===0){i.innerHTML=ht(8,"Kh\xF4ng t\xECm th\u1EA5y h\u1ED9 tr\u1ED3ng ph\xF9 h\u1EE3p.");return}i.innerHTML=a.map(o=>`
     <tr>
-      <td><strong>${esc(h.name)}</strong></td>
-      <td>${esc(h.ap)}</td>
-      <td>${esc(h.crop)}</td>
-      <td>${esc(h.area)}</td>
-      <td>${esc(h.years) || '—'}</td>
-      <td>${esc(h.phone) || '—'}</td>
-      <td>${esc(h.note)}</td>
+      <td><strong>${r(o.name)}</strong></td>
+      <td>${r(o.ap)}</td>
+      <td>${r(o.crop)}</td>
+      <td>${r(o.area)}</td>
+      <td>${r(o.years)||"\u2014"}</td>
+      <td>${r(o.phone)||"\u2014"}</td>
+      <td>${r(o.note)}</td>
       <td class="row-actions">
-        ${canManage(h.ap) ? `<button class="btn btn-sm" onclick="openHhForm(${h.id})">Sửa</button>
-          <button class="btn btn-sm btn-danger" onclick="deleteHousehold(${h.id})">Xóa</button>` : ''}
+        ${L(o.ap)?`<button class="btn btn-sm" onclick="openHhForm(${o.id})">S\u1EEDa</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteHousehold(${o.id})">X\xF3a</button>`:""}
       </td>
-    </tr>`).join('');
-
-  document.querySelectorAll('#hhTable th.sortable').forEach(th => {
-    const key = th.getAttribute('data-sort');
-    th.textContent = th.textContent.replace(/ [▲▼]$/, '');
-    if(key === hhSortKey){
-      th.textContent += hhSortDir === 1 ? ' ▲' : ' ▼';
-    }
-  });
-}
-
-function renderWardSummary(){
-  const aps = Array.from(new Set(households.map(h => h.ap))).sort();
-  const colors = ['var(--paddy)','var(--river)','var(--papaya)','var(--bloom)'];
-  const summary = aps.map(ap => {
-    const hhs = households.filter(h => h.ap === ap);
-    const totalArea = hhs.reduce((a, h) => a + Number(h.area || 0), 0);
-    const cropCount = {};
-    hhs.forEach(h => { cropCount[h.crop] = (cropCount[h.crop] || 0) + 1; });
-    const mainCrop = Object.keys(cropCount).sort((a, b) => cropCount[b] - cropCount[a])[0] || '—';
-    return { ap, count: hhs.length, totalArea, mainCrop };
-  });
-
-  const wardEl = document.getElementById('wardSummary');
-  if(wardEl){
-    wardEl.innerHTML = summary.map((s, i) => `
-      <div class="stat-card" style="--accent:${colors[i % colors.length]}">
+    </tr>`).join(""),document.querySelectorAll("#hhTable th.sortable").forEach(o=>{let c=o.getAttribute("data-sort");o.textContent=o.textContent.replace(/ [▲▼]$/,""),c===rt&&(o.textContent+=lt===1?" \u25B2":" \u25BC")})}}function lo(){let t=Array.from(new Set(k.map(o=>o.ap))).sort(),e=["var(--paddy)","var(--river)","var(--papaya)","var(--bloom)"],n=t.map(o=>{let c=k.filter(l=>l.ap===o),s=c.reduce((l,g)=>l+Number(g.area||0),0),u={};c.forEach(l=>{u[l.crop]=(u[l.crop]||0)+1});let d=Object.keys(u).sort((l,g)=>u[g]-u[l])[0]||"\u2014";return{ap:o,count:c.length,totalArea:s,mainCrop:d}}),a=document.getElementById("wardSummary");a&&(a.innerHTML=n.map((o,c)=>`
+      <div class="stat-card" style="--accent:${e[c%e.length]}">
         <svg class="icon"><use href="#icon-households"/></svg>
-        <div class="num-face">${s.count}</div>
-        <div class="lbl">Hộ trồng — ${esc(s.ap)}</div>
-        <div class="lbl" style="margin-top:6px;">${money(s.totalArea)} ha · Chủ lực: ${esc(s.mainCrop)}</div>
-      </div>`).join('') || '<div class="stat-card empty"><svg class="icon"><use href="#icon-sprout"/></svg>Chưa có dữ liệu hộ trồng.</div>';
-  }
+        <div class="num-face">${o.count}</div>
+        <div class="lbl">H\u1ED9 tr\u1ED3ng \u2014 ${r(o.ap)}</div>
+        <div class="lbl" style="margin-top:6px;">${_(o.totalArea)} ha \xB7 Ch\u1EE7 l\u1EF1c: ${r(o.mainCrop)}</div>
+      </div>`).join("")||'<div class="stat-card empty"><svg class="icon"><use href="#icon-sprout"/></svg>Ch\u01B0a c\xF3 d\u1EEF li\u1EC7u h\u1ED9 tr\u1ED3ng.</div>');let i=document.getElementById("wardAreaChart");if(i){if(typeof Chart>"u"){i.replaceWith(Object.assign(document.createElement("p"),{className:"empty",innerHTML:'<svg class="icon"><use href="#icon-sprout"/></svg>Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c th\u01B0 vi\u1EC7n bi\u1EC3u \u0111\u1ED3.'}));return}Kt&&Kt.destroy(),Kt=new Chart(i,{type:"bar",data:{labels:n.map(o=>o.ap),datasets:[{label:"Di\u1EC7n t\xEDch canh t\xE1c (ha)",data:n.map(o=>o.totalArea),backgroundColor:"#1C7ED6",borderRadius:6,maxBarThickness:60}]},options:{responsive:!0,plugins:{legend:{display:!1}},scales:{y:{beginAtZero:!0,grid:{color:"#E3E7DE"}},x:{grid:{display:!1}}}}})}}function uo(t){if(t&&!L(k.find(n=>n.id===t)?.ap)){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n s\u1EEDa h\u1ED9 tr\u1ED3ng n\xE0y","warn");return}w("hhOverlay"),document.getElementById("hhOverlay").classList.add("show"),O(document.getElementById("hhOverlay"));let e=document.getElementById("hh_ap");if(t){let n=k.find(a=>a.id===t);document.getElementById("hhFormTitle").textContent="S\u1EEDa th\xF4ng tin h\u1ED9 tr\u1ED3ng",document.getElementById("hh_editId").value=t,document.getElementById("hh_name").value=n.name,e.value=n.ap,document.getElementById("hh_crop").value=n.crop,document.getElementById("hh_area").value=n.area,document.getElementById("hh_years").value=n.years||"",document.getElementById("hh_phone").value=n.phone||"",document.getElementById("hh_note").value=n.note||""}else document.getElementById("hhFormTitle").textContent="Th\xEAm h\u1ED9 tr\u1ED3ng",document.getElementById("hh_editId").value="",["hh_name","hh_ap","hh_crop","hh_area","hh_years","hh_phone","hh_note"].forEach(n=>document.getElementById(n).value=""),h&&h.role==="ward"&&(e.value=h.ap);e.disabled=!!(h&&h.role==="ward")}function nn(){document.getElementById("hhOverlay").classList.remove("show"),document.getElementById("hh_ap").disabled=!1,w("hhOverlay"),M()}async function mo(){if(!S){m("Ch\u1EC9 c\xE1n b\u1ED9 n\xF4ng nghi\u1EC7p c\xF3 quy\u1EC1n l\u01B0u th\xF4ng tin h\u1ED9 tr\u1ED3ng","warn");return}w("hhOverlay");let t=document.getElementById("hh_editId").value,e=document.getElementById("hh_name").value.trim(),n=h&&h.role==="ward"?h.ap:document.getElementById("hh_ap").value.trim(),a=document.getElementById("hh_crop").value.trim(),i=document.getElementById("hh_area").value.trim(),o=!1;if(e||(b("hh_name","err_hh_name","Vui l\xF2ng nh\u1EADp t\xEAn ch\u1EE7 h\u1ED9."),o=!0),n||(b("hh_ap","err_hh_ap","Vui l\xF2ng ch\u1ECDn ho\u1EB7c nh\u1EADp \u1EA5p."),o=!0),a||(b("hh_crop","err_hh_crop","Vui l\xF2ng nh\u1EADp c\xE2y tr\u1ED3ng ch\xEDnh."),o=!0),(!i||Number(i)<=0)&&(b("hh_area","err_hh_area","Di\u1EC7n t\xEDch canh t\xE1c ph\u1EA3i l\u1EDBn h\u01A1n 0."),o=!0),o)return;let c={name:e,ap:n,crop:a,area:Number(i),years:Number(document.getElementById("hh_years").value||0),phone:document.getElementById("hh_phone").value.trim(),note:document.getElementById("hh_note").value.trim()};$("btnSaveHh",!0);try{if(t){if(!L(k.find(u=>u.id===Number(t))?.ap)){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n s\u1EEDa h\u1ED9 tr\u1ED3ng n\xE0y","warn");return}let s=k.findIndex(u=>u.id===Number(t));k[s]={...k[s],...c}}else{let s=k.length?Math.max(...k.map(u=>u.id))+1:1;k.push({id:s,...c})}await Me(),await T((t?"C\u1EADp nh\u1EADt h\u1ED9 tr\u1ED3ng: ":"Th\xEAm h\u1ED9 tr\u1ED3ng m\u1EDBi: ")+c.name+" \u2014 b\u1EDFi "+h.user),nn(),B(),m("\u0110\xE3 l\u01B0u th\xF4ng tin h\u1ED9 tr\u1ED3ng","ok")}catch(s){console.error(s),m("L\u1ED7i khi l\u01B0u h\u1ED9 tr\u1ED3ng: "+s.message,"warn")}finally{$("btnSaveHh",!1)}}async function ho(t){let e=k.find(a=>a.id===t);if(!L(e?.ap)){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n x\xF3a h\u1ED9 tr\u1ED3ng n\xE0y","warn");return}await J("X\xF3a h\u1ED9 tr\u1ED3ng",`X\xF3a h\u1ED9 tr\u1ED3ng "${e?.name}" (${e?.ap})? C\xE1c m\xF9a v\u1EE5 li\xEAn quan s\u1EBD chuy\u1EC3n v\u1EC1 tr\u1EA1ng th\xE1i "Ch\u01B0a g\xE1n h\u1ED9 tr\u1ED3ng".`,"X\xF3a h\u1ED9 tr\u1ED3ng",!0)&&(k=k.filter(a=>a.id!==t),y.forEach(a=>{a.householdId===t&&(a.householdId=null)}),await Me(),await se(),await T("X\xF3a h\u1ED9 tr\u1ED3ng: "+(e?e.name:"")+" \u2014 b\u1EDFi "+h.user),B(),m("\u0110\xE3 x\xF3a h\u1ED9 tr\u1ED3ng","warn"))}function an(){ee(it),h=null,S=!1,A=!1,p=null,location.hash.slice(1)==="quan-ly"&&(location.hash="tin-thu-mua"),B(),m("\u0110\xE3 \u0111\u0103ng xu\u1EA5t","ok")}function po(){an()}function Ut(t){document.getElementById("personLoginError").style.display="none",document.getElementById("personRegisterError").style.display="none",document.getElementById("pu_loginUser").value="",document.getElementById("pu_loginPass").value="",["pu_displayName","pu_regUser","pu_regPass","pu_phone","pu_ap"].forEach(e=>document.getElementById(e).value=""),document.getElementById("pu_role").value="grower",cn(),on(t||"login"),document.getElementById("personAuthOverlay").classList.add("show")}function Dt(){document.getElementById("personAuthOverlay").classList.remove("show")}function on(t){let e=t==="login";document.getElementById("personAuthTitle").textContent=e?"\u0110\u0103ng nh\u1EADp h\u1EC7 th\u1ED1ng":"\u0110\u0103ng k\xFD t\xE0i kho\u1EA3n",document.getElementById("personLoginView").style.display=e?"block":"none",document.getElementById("personRegisterView").style.display=e?"none":"block"}function cn(){let t=document.getElementById("pu_ap_field");t&&(t.style.display=document.getElementById("pu_role").value==="grower"?"block":"none")}async function go(){let t=document.getElementById("pu_loginUser").value.trim(),e=document.getElementById("pu_loginPass").value,n=document.getElementById("personLoginError");if(!mt(t)){n.textContent="Vui l\xF2ng nh\u1EADp \u0111\u1ECBnh d\u1EA1ng email h\u1EE3p l\u1EC7.",n.style.display="block";return}$("btnDoLogin",!0,"\u0110\u0103ng nh\u1EADp");try{let a=await In(it,ce(t),e),i=await Et(D(P,"admins",a.user.uid));if(i.exists()){h={uid:a.user.uid,...i.data()},S=!0,A=h.role==="super",Dt(),B(),m("\u0110\u0103ng nh\u1EADp th\xE0nh c\xF4ng \xB7 "+$t(h.role),"ok");return}let o=await Et(D(P,"personUsers",a.user.uid));if(!o.exists()){await ee(it),n.textContent="T\xE0i kho\u1EA3n ch\u01B0a \u0111\u01B0\u1EE3c k\xEDch ho\u1EA1t trong h\u1EC7 th\u1ED1ng n\xF4ng nghi\u1EC7p.",n.style.display="block";return}p={uid:a.user.uid,...o.data()},Dt(),B(),m("\u0110\u0103ng nh\u1EADp th\xE0nh c\xF4ng \xB7 "+At(p.role),"ok")}catch(a){console.error("L\u1ED7i \u0111\u0103ng nh\u1EADp:",a.code,a.message),n.textContent="Email ho\u1EB7c m\u1EADt kh\u1EA9u kh\xF4ng ch\xEDnh x\xE1c.",n.style.display="block"}finally{$("btnDoLogin",!1,"\u0110\u0103ng nh\u1EADp")}}async function yo(){let t=document.getElementById("pu_role").value,e=document.getElementById("pu_displayName").value.trim(),n=document.getElementById("pu_regUser").value.trim(),a=document.getElementById("pu_regPass").value,i=document.getElementById("pu_phone").value.trim(),o=t==="grower"?document.getElementById("pu_ap").value.trim():"",c=document.getElementById("personRegisterError"),s=ce(n);if(!e||!n||!a||!i||t==="grower"&&!o||!mt(s)){c.textContent=mt(s)?"Vui l\xF2ng \u0111i\u1EC1n \u0111\u1EA7y \u0111\u1EE7 c\xE1c th\xF4ng tin b\u1EAFt bu\u1ED9c.":"Vui l\xF2ng nh\u1EADp \u0111\u1ECBnh d\u1EA1ng email h\u1EE3p l\u1EC7.",c.style.display="block";return}if(a.length<8){c.textContent="M\u1EADt kh\u1EA9u ph\u1EA3i c\xF3 \xEDt nh\u1EA5t 8 k\xFD t\u1EF1.",c.style.display="block";return}$("btnDoRegister",!0,"T\u1EA1o t\xE0i kho\u1EA3n");try{let u=await Te(it,s,a),d={username:n,email:s,role:t,displayName:e,phone:i,ap:o,createdDate:new Date().toISOString().slice(0,10)};await ne(D(P,"personUsers",u.user.uid),d),p={uid:u.user.uid,...d},Dt(),B(),m("\u0110\u0103ng k\xFD t\xE0i kho\u1EA3n th\xE0nh c\xF4ng","ok")}catch(u){c.textContent=u.code==="auth/email-already-in-use"?"Email n\xE0y \u0111\xE3 \u0111\u01B0\u1EE3c \u0111\u0103ng k\xFD t\xE0i kho\u1EA3n.":"L\u1ED7i: "+u.message,c.style.display="block"}finally{$("btnDoRegister",!1,"T\u1EA1o t\xE0i kho\u1EA3n")}}function vo(){let t=document.getElementById("resetOverlay"),e=document.getElementById("reset_email"),n=document.getElementById("resetError");!t||!e||!n||(n.style.display="none",e.value="",t.classList.add("show"))}function sn(){let t=document.getElementById("resetOverlay");t&&t.classList.remove("show")}async function fo(){let t=document.getElementById("reset_email"),e=document.getElementById("resetError"),n=ce(t.value);if(e.style.display="none",!mt(n)){e.textContent="Vui l\xF2ng nh\u1EADp \u0111\u1ECBa ch\u1EC9 email h\u1EE3p l\u1EC7.",e.style.display="block";return}try{await Bn(it,n),sn(),m("\u0110\xE3 g\u1EEDi email kh\xF4i ph\u1EE5c m\u1EADt kh\u1EA9u. Vui l\xF2ng ki\u1EC3m tra h\u1ED9p th\u01B0!","ok")}catch(a){console.error("L\u1ED7i g\u1EEDi email reset:",a),e.textContent="L\u1ED7i g\u1EEDi y\xEAu c\u1EA7u: "+a.message,e.style.display="block"}}function bo(){document.getElementById("pwError").style.display="none";let t=h?h.user:p?p.email||p.username:"";document.getElementById("pw_user").value=t,document.getElementById("pw_pass").value="",document.getElementById("pw_pass2").value="",document.getElementById("pwOverlay").classList.add("show")}function rn(){document.getElementById("pwOverlay").classList.remove("show")}async function Io(){let t=document.getElementById("pw_pass").value,e=document.getElementById("pw_pass2").value,n=document.getElementById("pwError");if(!t||t.length<8){n.textContent="M\u1EADt kh\u1EA9u m\u1EDBi ph\u1EA3i c\xF3 t\u1ED1i thi\u1EC3u 8 k\xFD t\u1EF1.",n.style.display="block";return}if(t!==e){n.textContent="M\u1EADt kh\u1EA9u x\xE1c nh\u1EADn kh\xF4ng kh\u1EDBp.",n.style.display="block";return}try{await En(it.currentUser,t),rn(),m("\u0110\xE3 c\u1EADp nh\u1EADt m\u1EADt kh\u1EA9u th\xE0nh c\xF4ng","ok")}catch(a){n.textContent=a.code==="auth/requires-recent-login"?"V\xEC l\xFD do b\u1EA3o m\u1EADt, vui l\xF2ng \u0111\u0103ng xu\u1EA5t v\xE0 \u0111\u0103ng nh\u1EADp l\u1EA1i tr\u01B0\u1EDBc khi \u0111\u1ED5i m\u1EADt kh\u1EA9u.":"Kh\xF4ng th\u1EC3 \u0111\u1ED5i m\u1EADt kh\u1EA9u: "+a.message,n.style.display="block"}}function Eo(){if(!A){m("Ch\u1EC9 Qu\u1EA3n tr\u1ECB vi\xEAn x\xE3 c\xF3 quy\u1EC1n qu\u1EA3n l\xFD t\xE0i kho\u1EA3n","warn");return}jt(),document.getElementById("accountsOverlay").classList.add("show")}function Bo(){document.getElementById("accountsOverlay").classList.remove("show")}var q=null,ge={seasons:"M\xF9a v\u1EE5",households:"H\u1ED9 tr\u1ED3ng",qualityTests:"Ki\u1EC3m \u0111\u1ECBnh",outputs:"\u0110\u1EA7u ra",procurements:"Thu mua",products:"S\u1EA3n ph\u1EA9m",activity:"Ho\u1EA1t \u0111\u1ED9ng"};function wo(){if(!A){m("Ch\u1EC9 Qu\u1EA3n tr\u1ECB vi\xEAn x\xE3 m\u1EDBi c\xF3 quy\u1EC1n nh\u1EADp d\u1EEF li\u1EC7u test","warn");return}un(),document.getElementById("testDataImportOverlay").classList.add("show")}function ln(){document.getElementById("testDataImportOverlay").classList.remove("show"),un()}function un(){q=null;let t=document.getElementById("testDataImportFile"),e=document.getElementById("testDataImportPreview"),n=document.getElementById("testDataImportStatus"),a=document.getElementById("testDataImportFileName");t&&(t.value=""),e&&(e.hidden=!0),n&&(n.innerHTML=""),a&&(a.hidden=!0,a.textContent=""),document.querySelector('input[name="testDataImportMode"][value="replace"]')?.click()}function ko(t,e){let n=document.getElementById("testDataImportPreview"),a=document.getElementById("testDataImportFileName"),i=document.getElementById("testDataImportSummary"),o=document.getElementById("testDataImportNotice");!n||!a||!i||!o||(a.textContent="\u2713 "+t,i.innerHTML=gt.map(c=>`<div><span>${ge[c]}</span><strong>${e.counts[c]}</strong></div>`).join(""),o.textContent=e.unsupported.length?`\u0110\xE3 b\u1ECF qua ${e.unsupported.length} tr\u01B0\u1EDDng d\u1EEF li\u1EC7u kh\xF4ng \u0111\u01B0\u1EE3c h\u1ED7 tr\u1EE3.`:"",n.hidden=!1)}function Ot(t){let e=document.getElementById("testDataImportStatus");e&&(e.innerHTML=t.map(n=>`<div class="test-import-status-${n.ok?"ok":"error"}">${n.ok?"\u2713":"\u2715"} ${ge[n.key]||n.key}${n.reason?": "+r(n.reason):""}</div>`).join(""))}async function Co(t){if(!A){m("Ch\u1EC9 Qu\u1EA3n tr\u1ECB vi\xEAn x\xE3 m\u1EDBi c\xF3 quy\u1EC1n nh\u1EADp d\u1EEF li\u1EC7u test","warn");return}let e=t.files?.[0];if(!e)return;let n=document.getElementById("testDataImportFileName");n&&(n.textContent="\u2713 "+e.name,n.hidden=!1);try{let a=JSON.parse(await e.text()),i=fe(a,Ae);q={fileName:e.name,...i},ko(e.name,i),Ot(i.invalid.map(o=>({...o,ok:!1})))}catch(a){q=null,document.getElementById("testDataImportPreview").hidden=!0;let i=a instanceof SyntaxError?"File JSON kh\xF4ng h\u1EE3p l\u1EC7. Vui l\xF2ng ki\u1EC3m tra c\xFA ph\xE1p JSON.":a.message==="File ph\u1EA3i ch\u1EE9a m\u1ED9t object d\u1EEF li\u1EC7u."?"C\u1EA5u tr\xFAc JSON kh\xF4ng h\u1EE3p l\u1EC7. File ph\u1EA3i ch\u1EE9a m\u1ED9t object d\u1EEF li\u1EC7u.":"Kh\xF4ng th\u1EC3 \u0111\u1ECDc file JSON.";Ot([{key:"JSON",ok:!1,reason:i}])}}function $o(t,e,n){let a={seasons:y,households:k,qualityTests:I,outputs:C,procurements:E,products:v,activity:j}[t]||[];return ve(a,e,n)}function _o(t,e){let n=["products","seasons","households","qualityTests","outputs","procurements"].filter(a=>Object.hasOwn(t.data,a)).map(a=>`${t.counts[a]} ${ge[a].toLowerCase()}`);return J("Nh\u1EADp d\u1EEF li\u1EC7u test?",`B\u1EA1n s\u1EAFp nh\u1EADp:
+${n.join(`
+`)||"Kh\xF4ng c\xF3 dataset h\u1EE3p l\u1EC7"}
 
-  const ctx = document.getElementById('wardAreaChart');
-  if(!ctx) return;
-  if(typeof Chart === 'undefined'){
-    ctx.replaceWith(Object.assign(document.createElement('p'), {
-      className: 'empty',
-      innerHTML: '<svg class="icon"><use href="#icon-sprout"/></svg>Không tải được thư viện biểu đồ.'
-    }));
-    return;
-  }
-  if(wardChart) wardChart.destroy();
-  wardChart = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: summary.map(s => s.ap),
-      datasets: [{
-        label: 'Diện tích canh tác (ha)',
-        data: summary.map(s => s.totalArea),
-        backgroundColor: '#1C7ED6',
-        borderRadius: 6,
-        maxBarThickness: 60
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: {
-        y: { beginAtZero: true, grid: { color: '#E3E7DE' } },
-        x: { grid: { display: false } }
-      }
-    }
-  });
-}
+Ch\u1EBF \u0111\u1ED9: ${e==="replace"?"Thay th\u1EBF d\u1EEF li\u1EC7u hi\u1EC7n t\u1EA1i":"Th\xEAm v\xE0o d\u1EEF li\u1EC7u hi\u1EC7n t\u1EA1i"}
 
-function openHhForm(id){
-  if(id && !canManage(households.find(x => x.id === id)?.ap)){
-    toast('Bạn không có quyền sửa hộ trồng này', 'warn');
-    return;
-  }
-  clearFieldErrors('hhOverlay');
-  document.getElementById('hhOverlay').classList.add('show');
-  const apInput = document.getElementById('hh_ap');
-  if(id){
-    const h = households.find(x => x.id === id);
-    document.getElementById('hhFormTitle').textContent = 'Sửa thông tin hộ trồng';
-    document.getElementById('hh_editId').value = id;
-    document.getElementById('hh_name').value = h.name;
-    apInput.value = h.ap;
-    document.getElementById('hh_crop').value = h.crop;
-    document.getElementById('hh_area').value = h.area;
-    document.getElementById('hh_years').value = h.years || '';
-    document.getElementById('hh_phone').value = h.phone || '';
-    document.getElementById('hh_note').value = h.note || '';
-  }else{
-    document.getElementById('hhFormTitle').textContent = 'Thêm hộ trồng';
-    document.getElementById('hh_editId').value = '';
-    ['hh_name','hh_ap','hh_crop','hh_area','hh_years','hh_phone','hh_note'].forEach(k => document.getElementById(k).value = '');
-    if(currentUser && currentUser.role === 'ward') apInput.value = currentUser.ap;
-  }
-  apInput.disabled = !!(currentUser && currentUser.role === 'ward');
-}
-
-function closeHhForm(){
-  document.getElementById('hhOverlay').classList.remove('show');
-  document.getElementById('hh_ap').disabled = false;
-  clearFieldErrors('hhOverlay');
-}
-
-async function saveHhForm(){
-  if(!isAdmin){
-    toast('Chỉ cán bộ nông nghiệp có quyền lưu thông tin hộ trồng', 'warn');
-    return;
-  }
-  clearFieldErrors('hhOverlay');
-
-  const id = document.getElementById('hh_editId').value;
-  const nameVal = document.getElementById('hh_name').value.trim();
-  const apVal = (currentUser && currentUser.role === 'ward') ? currentUser.ap : document.getElementById('hh_ap').value.trim();
-  const cropVal = document.getElementById('hh_crop').value.trim();
-  const areaVal = document.getElementById('hh_area').value.trim();
-
-  let hasErr = false;
-  if(!nameVal){
-    setFieldError('hh_name', 'err_hh_name', 'Vui lòng nhập tên chủ hộ.');
-    hasErr = true;
-  }
-  if(!apVal){
-    setFieldError('hh_ap', 'err_hh_ap', 'Vui lòng chọn hoặc nhập ấp.');
-    hasErr = true;
-  }
-  if(!cropVal){
-    setFieldError('hh_crop', 'err_hh_crop', 'Vui lòng nhập cây trồng chính.');
-    hasErr = true;
-  }
-  if(!areaVal || Number(areaVal) <= 0){
-    setFieldError('hh_area', 'err_hh_area', 'Diện tích canh tác phải lớn hơn 0.');
-    hasErr = true;
-  }
-  if(hasErr) return;
-
-  const record = {
-    name: nameVal,
-    ap: apVal,
-    crop: cropVal,
-    area: Number(areaVal),
-    years: Number(document.getElementById('hh_years').value || 0),
-    phone: document.getElementById('hh_phone').value.trim(),
-    note: document.getElementById('hh_note').value.trim()
-  };
-
-  setBtnLoading('btnSaveHh', true);
-  try{
-    if(id){
-      if(!canManage(households.find(x => x.id === Number(id))?.ap)){
-        toast('Bạn không có quyền sửa hộ trồng này', 'warn');
-        return;
-      }
-      const idx = households.findIndex(x => x.id === Number(id));
-      households[idx] = { ...households[idx], ...record };
-    }else{
-      const newId = households.length ? Math.max(...households.map(h => h.id)) + 1 : 1;
-      households.push({ id: newId, ...record });
-    }
-    await saveHouseholds();
-    await logActivity((id ? 'Cập nhật hộ trồng: ' : 'Thêm hộ trồng mới: ') + record.name + ' — bởi ' + currentUser.user);
-    closeHhForm();
-    renderAll();
-    toast('Đã lưu thông tin hộ trồng', 'ok');
-  }catch(e){
-    console.error(e);
-    toast('Lỗi khi lưu hộ trồng: ' + e.message, 'warn');
-  }finally{
-    setBtnLoading('btnSaveHh', false);
-  }
-}
-
-async function deleteHousehold(id){
-  const h = households.find(x => x.id === id);
-  if(!canManage(h?.ap)){
-    toast('Bạn không có quyền xóa hộ trồng này', 'warn');
-    return;
-  }
-  const ok = await showConfirmDialog(
-    'Xóa hộ trồng',
-    `Xóa hộ trồng "${h?.name}" (${h?.ap})? Các mùa vụ liên quan sẽ chuyển về trạng thái "Chưa gán hộ trồng".`,
-    'Xóa hộ trồng',
-    true
-  );
-  if(!ok) return;
-
-  households = households.filter(x => x.id !== id);
-  seasons.forEach(s => {
-    if(s.householdId === id) s.householdId = null;
-  });
-  await saveHouseholds();
-  await saveSeasons();
-  await logActivity('Xóa hộ trồng: ' + (h ? h.name : '') + ' — bởi ' + currentUser.user);
-  renderAll();
-  toast('Đã xóa hộ trồng', 'warn');
-}
-
-/* ============ Đăng nhập / Đăng xuất ============ */
-function logout(){
-  signOut(auth);
-  currentUser = null;
-  isAdmin = false;
-  isSuperAdmin = false;
-  currentPersonUser = null;
-  if(location.hash.slice(1) === 'quan-ly'){
-    location.hash = 'tin-thu-mua';
-  }
-  renderAll();
-  toast('Đã đăng xuất', 'ok');
-}
-
-function personLogout(){ logout(); }
-
-function openPersonAuth(mode){
-  document.getElementById('personLoginError').style.display = 'none';
-  document.getElementById('personRegisterError').style.display = 'none';
-  document.getElementById('pu_loginUser').value = '';
-  document.getElementById('pu_loginPass').value = '';
-  ['pu_displayName','pu_regUser','pu_regPass','pu_phone','pu_ap'].forEach(k => document.getElementById(k).value = '');
-  document.getElementById('pu_role').value = 'grower';
-  togglePuApField();
-  switchPersonAuth(mode || 'login');
-  document.getElementById('personAuthOverlay').classList.add('show');
-}
-
-function closePersonAuth(){
-  document.getElementById('personAuthOverlay').classList.remove('show');
-}
-
-function switchPersonAuth(mode){
-  const isLogin = mode === 'login';
-  document.getElementById('personAuthTitle').textContent = isLogin ? 'Đăng nhập hệ thống' : 'Đăng ký tài khoản';
-  document.getElementById('personLoginView').style.display = isLogin ? 'block' : 'none';
-  document.getElementById('personRegisterView').style.display = isLogin ? 'none' : 'block';
-}
-
-function togglePuApField(){
-  const apField = document.getElementById('pu_ap_field');
-  if(apField){
-    apField.style.display = document.getElementById('pu_role').value === 'grower' ? 'block' : 'none';
-  }
-}
-
-async function doPersonLogin(){
-  const u = document.getElementById('pu_loginUser').value.trim();
-  const p = document.getElementById('pu_loginPass').value;
-  const errEl = document.getElementById('personLoginError');
-
-  if(!isEmail(u)){
-    errEl.textContent = 'Vui lòng nhập định dạng email hợp lệ.';
-    errEl.style.display = 'block';
-    return;
-  }
-
-  setBtnLoading('btnDoLogin', true, 'Đăng nhập');
-  try{
-    const cred = await signInWithEmailAndPassword(auth, personEmail(u), p);
-    // Nhận diện vai trò: Admin xã / Cán bộ ấp hay Hộ trồng / Quán ăn
-    const adminSnap = await getDoc(doc(db, 'admins', cred.user.uid));
-    if(adminSnap.exists()){
-      currentUser = { uid: cred.user.uid, ...adminSnap.data() };
-      isAdmin = true;
-      isSuperAdmin = currentUser.role === 'super';
-      closePersonAuth();
-      renderAll();
-      toast('Đăng nhập thành công · ' + roleLabel(currentUser.role), 'ok');
-      return;
-    }
-    const personSnap = await getDoc(doc(db, 'personUsers', cred.user.uid));
-    if(!personSnap.exists()){
-      await signOut(auth);
-      errEl.textContent = 'Tài khoản chưa được kích hoạt trong hệ thống nông nghiệp.';
-      errEl.style.display = 'block';
-      return;
-    }
-    currentPersonUser = { uid: cred.user.uid, ...personSnap.data() };
-    closePersonAuth();
-    renderAll();
-    toast('Đăng nhập thành công · ' + personRoleLabel(currentPersonUser.role), 'ok');
-  }catch(e){
-    console.error('Lỗi đăng nhập:', e.code, e.message);
-    errEl.textContent = 'Email hoặc mật khẩu không chính xác.';
-    errEl.style.display = 'block';
-  }finally{
-    setBtnLoading('btnDoLogin', false, 'Đăng nhập');
-  }
-}
-
-async function doPersonRegister(){
-  const role = document.getElementById('pu_role').value;
-  const displayName = document.getElementById('pu_displayName').value.trim();
-  const username = document.getElementById('pu_regUser').value.trim();
-  const password = document.getElementById('pu_regPass').value;
-  const phone = document.getElementById('pu_phone').value.trim();
-  const ap = role === 'grower' ? document.getElementById('pu_ap').value.trim() : '';
-  const err = document.getElementById('personRegisterError');
-  const email = personEmail(username);
-
-  if(!displayName || !username || !password || !phone || (role === 'grower' && !ap) || !isEmail(email)){
-    err.textContent = !isEmail(email) ? 'Vui lòng nhập định dạng email hợp lệ.' : 'Vui lòng điền đầy đủ các thông tin bắt buộc.';
-    err.style.display = 'block';
-    return;
-  }
-  if(password.length < 8){
-    err.textContent = 'Mật khẩu phải có ít nhất 8 ký tự.';
-    err.style.display = 'block';
-    return;
-  }
-
-  setBtnLoading('btnDoRegister', true, 'Tạo tài khoản');
-  try{
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    const record = {
-      username,
-      email,
-      role,
-      displayName,
-      phone,
-      ap,
-      createdDate: new Date().toISOString().slice(0, 10)
-    };
-    await setDoc(doc(db, 'personUsers', cred.user.uid), record);
-    currentPersonUser = { uid: cred.user.uid, ...record };
-    closePersonAuth();
-    renderAll();
-    toast('Đăng ký tài khoản thành công', 'ok');
-  }catch(e){
-    err.textContent = e.code === 'auth/email-already-in-use' ? 'Email này đã được đăng ký tài khoản.' : ('Lỗi: ' + e.message);
-    err.style.display = 'block';
-  }finally{
-    setBtnLoading('btnDoRegister', false, 'Tạo tài khoản');
-  }
-}
-
-function openResetOverlay(){
-  const overlay = document.getElementById('resetOverlay');
-  const emailInput = document.getElementById('reset_email');
-  const errEl = document.getElementById('resetError');
-  if(!overlay || !emailInput || !errEl) return;
-  errEl.style.display = 'none';
-  emailInput.value = '';
-  overlay.classList.add('show');
-}
-
-function closeResetOverlay(){
-  const overlay = document.getElementById('resetOverlay');
-  if(overlay) overlay.classList.remove('show');
-}
-
-async function sendPasswordResetRequest(){
-  const emailInput = document.getElementById('reset_email');
-  const errEl = document.getElementById('resetError');
-  const email = personEmail(emailInput.value);
-  errEl.style.display = 'none';
-  if(!isEmail(email)){
-    errEl.textContent = 'Vui lòng nhập địa chỉ email hợp lệ.';
-    errEl.style.display = 'block';
-    return;
-  }
-  try{
-    await sendPasswordResetEmail(auth, email);
-    closeResetOverlay();
-    toast('Đã gửi email khôi phục mật khẩu. Vui lòng kiểm tra hộp thư!', 'ok');
-  }catch(e){
-    console.error('Lỗi gửi email reset:', e);
-    errEl.textContent = 'Lỗi gửi yêu cầu: ' + e.message;
-    errEl.style.display = 'block';
-  }
-}
-
-function openPwForm(){
-  document.getElementById('pwError').style.display = 'none';
-  const label = currentUser ? currentUser.user : (currentPersonUser ? (currentPersonUser.email || currentPersonUser.username) : '');
-  document.getElementById('pw_user').value = label;
-  document.getElementById('pw_pass').value = '';
-  document.getElementById('pw_pass2').value = '';
-  document.getElementById('pwOverlay').classList.add('show');
-}
-
-function closePwForm(){
-  document.getElementById('pwOverlay').classList.remove('show');
-}
-
-async function savePwForm(){
-  const p1 = document.getElementById('pw_pass').value;
-  const p2 = document.getElementById('pw_pass2').value;
-  const errEl = document.getElementById('pwError');
-
-  if(!p1 || p1.length < 8){
-    errEl.textContent = 'Mật khẩu mới phải có tối thiểu 8 ký tự.';
-    errEl.style.display = 'block';
-    return;
-  }
-  if(p1 !== p2){
-    errEl.textContent = 'Mật khẩu xác nhận không khớp.';
-    errEl.style.display = 'block';
-    return;
-  }
-
-  try{
-    await updatePassword(auth.currentUser, p1);
-    closePwForm();
-    toast('Đã cập nhật mật khẩu thành công', 'ok');
-  }catch(e){
-    errEl.textContent = e.code === 'auth/requires-recent-login'
-      ? 'Vì lý do bảo mật, vui lòng đăng xuất và đăng nhập lại trước khi đổi mật khẩu.'
-      : ('Không thể đổi mật khẩu: ' + e.message);
-    errEl.style.display = 'block';
-  }
-}
-
-/* ============ Quản lý tài khoản cán bộ (Chỉ SuperAdmin) ============ */
-function openAccountsModal(){
-  if(!isSuperAdmin){
-    toast('Chỉ Quản trị viên xã có quyền quản lý tài khoản', 'warn');
-    return;
-  }
-  renderAccountsTable();
-  document.getElementById('accountsOverlay').classList.add('show');
-}
-
-function closeAccountsModal(){
-  document.getElementById('accountsOverlay').classList.remove('show');
-}
-
-/* ============ Nhập dữ liệu test từ JSON (Chỉ SuperAdmin) ============ */
-let testDataImport = null;
-
-const IMPORT_LABELS = {
-  seasons: 'Mùa vụ',
-  households: 'Hộ trồng',
-  qualityTests: 'Kiểm định',
-  outputs: 'Đầu ra',
-  procurements: 'Thu mua',
-  products: 'Sản phẩm',
-  activity: 'Hoạt động'
-};
-
-function openTestDataImportModal(){
-  if(!isSuperAdmin){
-    toast('Chỉ Quản trị viên xã mới có quyền nhập dữ liệu test', 'warn');
-    return;
-  }
-  resetTestDataImport();
-  document.getElementById('testDataImportOverlay').classList.add('show');
-}
-
-function closeTestDataImportModal(){
-  document.getElementById('testDataImportOverlay').classList.remove('show');
-  resetTestDataImport();
-}
-
-function resetTestDataImport(){
-  testDataImport = null;
-  const input = document.getElementById('testDataImportFile');
-  const preview = document.getElementById('testDataImportPreview');
-  const status = document.getElementById('testDataImportStatus');
-  const fileName = document.getElementById('testDataImportFileName');
-  if(input) input.value = '';
-  if(preview) preview.hidden = true;
-  if(status) status.innerHTML = '';
-  if(fileName){ fileName.hidden = true; fileName.textContent = ''; }
-  document.querySelector('input[name="testDataImportMode"][value="replace"]')?.click();
-}
-
-function renderTestDataImportPreview(fileName, prepared){
-  const preview = document.getElementById('testDataImportPreview');
-  const fileNameEl = document.getElementById('testDataImportFileName');
-  const summary = document.getElementById('testDataImportSummary');
-  const notice = document.getElementById('testDataImportNotice');
-  if(!preview || !fileNameEl || !summary || !notice) return;
-
-  fileNameEl.textContent = '✓ ' + fileName;
-  summary.innerHTML = IMPORTABLE_KEYS.map(key =>
-    `<div><span>${IMPORT_LABELS[key]}</span><strong>${prepared.counts[key]}</strong></div>`
-  ).join('');
-  notice.textContent = prepared.unsupported.length
-    ? `Đã bỏ qua ${prepared.unsupported.length} trường dữ liệu không được hỗ trợ.`
-    : '';
-  preview.hidden = false;
-}
-
-function renderTestDataImportStatus(items){
-  const status = document.getElementById('testDataImportStatus');
-  if(!status) return;
-  status.innerHTML = items.map(item =>
-    `<div class="test-import-status-${item.ok ? 'ok' : 'error'}">${item.ok ? '✓' : '✕'} ${IMPORT_LABELS[item.key] || item.key}${item.reason ? ': ' + esc(item.reason) : ''}</div>`
-  ).join('');
-}
-
-async function readTestDataImportFile(input){
-  if(!isSuperAdmin){
-    toast('Chỉ Quản trị viên xã mới có quyền nhập dữ liệu test', 'warn');
-    return;
-  }
-  const file = input.files?.[0];
-  if(!file) return;
-  const fileName = document.getElementById('testDataImportFileName');
-  if(fileName){ fileName.textContent = '✓ ' + file.name; fileName.hidden = false; }
-
-  try{
-    const parsed = JSON.parse(await file.text());
-    const prepared = prepareTestDataImport(parsed, normalizeProduct);
-    testDataImport = { fileName: file.name, ...prepared };
-    renderTestDataImportPreview(file.name, prepared);
-    renderTestDataImportStatus(prepared.invalid.map(item => ({ ...item, ok: false })));
-  }catch(e){
-    testDataImport = null;
-    document.getElementById('testDataImportPreview').hidden = true;
-    const message = e instanceof SyntaxError
-      ? 'File JSON không hợp lệ. Vui lòng kiểm tra cú pháp JSON.'
-      : (e.message === 'File phải chứa một object dữ liệu.'
-        ? 'Cấu trúc JSON không hợp lệ. File phải chứa một object dữ liệu.'
-        : 'Không thể đọc file JSON.');
-    renderTestDataImportStatus([{ key: 'JSON', ok: false, reason: message }]);
-  }
-}
-
-function testDataImportTarget(key, imported, mode){
-  const current = {
-    seasons, households, qualityTests, outputs, procurements, products, activity
-  }[key] || [];
-  return buildTestDataImportValue(current, imported, mode);
-}
-
-function testDataImportConfirmation(prepared, mode){
-  const lines = ['products', 'seasons', 'households', 'qualityTests', 'outputs', 'procurements']
-    .filter(key => Object.hasOwn(prepared.data, key))
-    .map(key => `${prepared.counts[key]} ${IMPORT_LABELS[key].toLowerCase()}`);
-  return showConfirmDialog(
-    'Nhập dữ liệu test?',
-    `Bạn sắp nhập:\n${lines.join('\n') || 'Không có dataset hợp lệ'}\n\nChế độ: ${mode === 'replace' ? 'Thay thế dữ liệu hiện tại' : 'Thêm vào dữ liệu hiện tại'}\n\nHành động này sẽ ghi dữ liệu lên hệ thống.`,
-    'Xác nhận nhập',
-    mode === 'replace'
-  );
-}
-
-async function importTestData(){
-  if(!isSuperAdmin){
-    toast('Chỉ Quản trị viên xã mới có quyền nhập dữ liệu test', 'warn');
-    return;
-  }
-  if(!testDataImport){
-    toast('Vui lòng chọn file JSON hợp lệ trước khi nhập', 'warn');
-    return;
-  }
-
-  const keys = IMPORTABLE_KEYS.filter(key => Object.hasOwn(testDataImport.data, key));
-  if(keys.length === 0){
-    toast('File không có dataset hợp lệ để nhập', 'warn');
-    return;
-  }
-  const mode = document.querySelector('input[name="testDataImportMode"]:checked')?.value || 'replace';
-  if(!await testDataImportConfirmation(testDataImport, mode)) return;
-
-  setBtnLoading('testDataImportSubmit', true, 'Nhập dữ liệu');
-  const results = testDataImport.invalid.map(item => ({ ...item, ok: false }));
-  let importedCount = 0;
-  try{
-    for(const key of keys){
-      const value = testDataImportTarget(key, testDataImport.data[key], mode);
-      const saved = await saveAppData(key, value);
-      if(saved.ok){
-        applyAppDataValue(key, value);
-        importedCount += testDataImport.counts[key];
-        results.push({ key, ok: true });
-      }else{
-        results.push({ key, ok: false, reason: saved.error });
-      }
-    }
-
-    const succeeded = results.filter(item => item.ok);
-    if(succeeded.length === 0){
-      renderTestDataImportStatus(results);
-      toast('Không thể nhập dữ liệu test', 'warn');
-      return;
-    }
-
-    const summary = `${testDataImport.counts.products || 0} sản phẩm, ${testDataImport.counts.seasons || 0} mùa vụ, ${testDataImport.counts.households || 0} hộ trồng`;
-    const logged = await logActivity(`Quản trị viên đã nhập dữ liệu test từ file: ${testDataImport.fileName} (${summary}).`);
-    if(!logged?.ok) results.push({ key: 'activity', ok: false, reason: logged?.error || 'Không thể ghi nhật ký hoạt động.' });
-
-    renderAll();
-    if(results.some(item => !item.ok)){
-      renderTestDataImportStatus(results);
-      toast('Đã nhập một phần dữ liệu test', 'warn');
-      return;
-    }
-    closeTestDataImportModal();
-    toast(`Đã nhập dữ liệu test thành công (${importedCount} bản ghi)`, 'ok');
-  }finally{
-    setBtnLoading('testDataImportSubmit', false, 'Nhập dữ liệu');
-  }
-}
-
-function downloadSampleTestJson(){
-  if(!isSuperAdmin){
-    toast('Chỉ Quản trị viên xã mới có quyền nhập dữ liệu test', 'warn');
-    return;
-  }
-  const sample = {
-    seasons: [
-      { id: 1, name: 'Vụ rau an toàn Thu Đông 2026', crop: 'Cải xanh', householdId: 1, region: 'Ấp Bốn Phú', start: '2026-09-01', end: '2026-12-15', area: 1.5, yieldTon: 18, price: 14500, specialty: false, status: 'growing' },
-      { id: 2, name: 'Vụ Cà chua VietGAP 2026', crop: 'Cà chua', householdId: 2, region: 'Ấp Bốn Phú', start: '2026-08-15', end: '2026-11-30', area: 2.0, yieldTon: 25, price: 28000, specialty: false, status: 'harvesting' },
-      { id: 3, name: 'Vụ Chôm chôm đường chín sớm 2026', crop: 'Chôm chôm', householdId: 3, region: 'Ấp An Hòa', start: '2026-05-01', end: '2026-09-20', area: 3.2, yieldTon: 40, price: 45000, specialty: true, status: 'harvesting' },
-      { id: 4, name: 'Vụ Sơ ri xuất khẩu 2026', crop: 'Sơ ri', householdId: 4, region: 'Ấp An Hòa', start: '2026-06-10', end: '2026-10-30', area: 1.8, yieldTon: 22, price: 35000, specialty: true, status: 'harvesting' },
-      { id: 5, name: 'Vụ Rau muống nước sông Sài Gòn', crop: 'Rau muống', householdId: 5, region: 'Ấp 1', start: '2026-09-01', end: '2026-10-15', area: 1.0, yieldTon: 12, price: 18000, specialty: false, status: 'growing' }
-    ],
-    households: [
-      { id: 1, name: 'Nguyễn Văn Bình', ap: 'Ấp Bốn Phú', crop: 'Cải xanh', area: 1.5, years: 6, phone: '0900000001', note: 'Hệ thống tưới tự động' },
-      { id: 2, name: 'Trần Thị Mai', ap: 'Ấp Bốn Phú', crop: 'Cà chua', area: 2.0, years: 8, phone: '0900000002', note: 'Nhà màng công nghệ cao' },
-      { id: 3, name: 'Lê Văn Sáu', ap: 'Ấp An Hòa', crop: 'Chôm chôm', area: 3.2, years: 15, phone: '0900000003', note: 'Vườn chôm chôm hữu cơ ven sông' },
-      { id: 4, name: 'Phạm Thị Hạnh', ap: 'Ấp An Hòa', crop: 'Sơ ri', area: 1.8, years: 10, phone: '0900000004', note: 'Canh tác theo chuẩn GlobalGAP' },
-      { id: 5, name: 'Võ Văn Được', ap: 'Ấp 1', crop: 'Rau muống', area: 1.0, years: 5, phone: '0900000005', note: 'Nước nguồn phù sa tự nhiên' }
-    ],
-    qualityTests: [
-      { id: 1, seasonId: 1, metric: 'Dư lượng thuốc BVTV', value: 0.01, unit: 'mg/kg', standard: 'VietGAP / Nội địa', threshold: 0.1, date: '2026-10-10', lab: 'Trung tâm kiểm định Bình Mỹ', result: 'pass', note: 'Đạt ngưỡng an toàn' },
-      { id: 2, seasonId: 2, metric: 'Nitrat (NO3-)', value: 120, unit: 'mg/kg', standard: 'VietGAP / Nội địa', threshold: 500, date: '2026-09-20', lab: 'Quatest 3', result: 'pass', note: 'Hàm lượng nitrat an toàn' },
-      { id: 3, seasonId: 3, metric: 'Kim loại nặng (Chì Pb)', value: 0.005, unit: 'mg/kg', standard: 'Xuất khẩu (GlobalGAP/MRL quốc tế)', threshold: 0.02, date: '2026-09-05', lab: 'Eurofins Sắc Ký Hải Đăng', result: 'pass', note: 'Đạt chuẩn xuất khẩu' },
-      { id: 4, seasonId: 4, metric: 'Vi sinh E. coli', value: 0, unit: 'CFU/g', standard: 'VietGAP / Nội địa', threshold: 10, date: '2026-09-12', lab: 'Trung tâm kiểm định Bình Mỹ', result: 'pass', note: 'Âm tính vi sinh gây hại' }
-    ],
-    outputs: [
-      { id: 1, seasonId: 1, buyer: 'HTX Nông sản Xanh Bình Mỹ', channel: 'Chợ đầu mối', volume: 8, price: 14500, date: '2026-12-12', status: 'completed', note: '' },
-      { id: 2, seasonId: 2, buyer: 'Siêu thị Co.opmart Củ Chi', channel: 'Siêu thị / cửa hàng thực phẩm sạch', volume: 10, price: 28000, date: '2026-11-20', status: 'completed', note: 'Giao hàng đợt 1' }
-    ],
-    procurements: [
-      { id: 1, postedDate: '2026-09-15', title: 'Thu mua cải xanh an toàn', buyer: 'HTX Nông sản Xanh Bình Mỹ', crop: 'Cải xanh', ap: 'Ấp Bốn Phú', quantity: 8, unitLabel: 'tấn', priceOffer: 14500, requirement: 'Rau tươi, đồng đều, chuẩn VietGAP', deadline: '2026-09-25', contactName: 'Nguyễn Minh Anh', contactPhone: '0900000002', note: '', status: 'open', ownerUsername: 'admin', applicants: [] },
-      { id: 2, postedDate: '2026-09-10', title: 'Thu mua chôm chôm xuất khẩu', buyer: 'Công ty Xuất nhập khẩu Trái Cây Miền Nam', crop: 'Chôm chôm', ap: 'Ấp An Hòa', quantity: 15, unitLabel: 'tấn', priceOffer: 45000, requirement: 'Trái chín đều, không dập', deadline: '2026-09-30', contactName: 'Trần Văn Tiến', contactPhone: '0900000006', note: '', status: 'open', ownerUsername: 'admin', applicants: [] }
-    ],
-    products: [
-      {
-        id: 1,
-        productCode: 'BM-2026-001',
-        batchCode: 'LÔ-01',
-        name: 'Cải xanh an toàn Bình Mỹ',
-        sellerName: 'Nguyễn Văn Bình',
-        ap: 'Ấp Bốn Phú',
-        quantity: 120,
-        unitLabel: 'kg',
-        price: 25000,
-        harvestDate: '2026-09-14',
-        certification: 'VietGAP',
-        image: 'https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80',
-        contactName: 'Nguyễn Văn Bình',
-        contactPhone: '0900000001',
-        note: 'Rau cải xanh tươi giòn thu hoạch sáng sớm, không thuốc trừ sâu hóa học.',
-        status: 'available',
-        postedDate: '2026-09-14',
-        ownerUsername: 'admin',
-        buyRequests: []
-      },
-      {
-        id: 2,
-        productCode: 'BM-2026-002',
-        batchCode: 'LÔ-02',
-        name: 'Cà chua bi hữu cơ',
-        sellerName: 'Trần Thị Mai',
-        ap: 'Ấp Bốn Phú',
-        quantity: 80,
-        unitLabel: 'kg',
-        price: 30000,
-        harvestDate: '2026-09-15',
-        certification: 'VietGAP',
-        image: 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&w=600&q=80',
-        contactName: 'Trần Thị Mai',
-        contactPhone: '0900000002',
-        note: 'Cà chua ngọt đậm, vỏ mỏng, trồng trong nhà màng công nghệ cao.',
-        status: 'available',
-        postedDate: '2026-09-15',
-        ownerUsername: 'admin',
-        buyRequests: []
-      },
-      {
-        id: 3,
-        productCode: 'BM-2026-003',
-        batchCode: 'LÔ-03',
-        name: 'Chôm chôm Thái Bình Mỹ',
-        sellerName: 'Lê Văn Sáu',
-        ap: 'Ấp An Hòa',
-        quantity: 50,
-        unitLabel: 'kg',
-        price: 45000,
-        harvestDate: '2026-09-13',
-        certification: 'Xuất khẩu (GlobalGAP)',
-        image: 'https://images.unsplash.com/photo-1587132137056-bfbf0166836e?auto=format&fit=crop&w=600&q=80',
-        contactName: 'Lê Văn Sáu',
-        contactPhone: '0900000003',
-        note: 'Chôm chôm cùi dày tróc hột, vị ngọt thanh mát, hái tại vườn ven sông.',
-        status: 'available',
-        postedDate: '2026-09-13',
-        ownerUsername: 'admin',
-        buyRequests: []
-      },
-      {
-        id: 4,
-        productCode: 'BM-2026-004',
-        batchCode: 'LÔ-04',
-        name: 'Sơ ri ngọt An Hòa',
-        sellerName: 'Phạm Thị Hạnh',
-        ap: 'Ấp An Hòa',
-        quantity: 35,
-        unitLabel: 'kg',
-        price: 35000,
-        harvestDate: '2026-09-14',
-        certification: 'VietGAP',
-        image: 'https://images.unsplash.com/photo-1528825871115-3581a5387919?auto=format&fit=crop&w=600&q=80',
-        contactName: 'Phạm Thị Hạnh',
-        contactPhone: '0900000004',
-        note: 'Sơ ri chín mọng, giàu vitamin C, hái tuyển từng trái.',
-        status: 'available',
-        postedDate: '2026-09-14',
-        ownerUsername: 'admin',
-        buyRequests: []
-      },
-      {
-        id: 5,
-        productCode: 'BM-2026-005',
-        batchCode: 'LÔ-05',
-        name: 'Rau muống nước sạch Bình Mỹ',
-        sellerName: 'Võ Văn Được',
-        ap: 'Ấp 1',
-        quantity: 150,
-        unitLabel: 'kg',
-        price: 18000,
-        harvestDate: '2026-09-15',
-        certification: 'Chưa kiểm định',
-        image: 'https://images.unsplash.com/photo-1550989460-0adf9ea622e2?auto=format&fit=crop&w=600&q=80',
-        contactName: 'Võ Văn Được',
-        contactPhone: '0900000005',
-        note: 'Rau muống ngọn non, thân giòn nước, trồng theo nguồn nước tự nhiên.',
-        status: 'available',
-        postedDate: '2026-09-15',
-        ownerUsername: 'admin',
-        buyRequests: []
-      }
-    ],
-    activity: []
-  };
-  const url = URL.createObjectURL(new Blob([JSON.stringify(sample, null, 2)], { type: 'application/json' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'binh-my-test-data.json';
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
-function renderAccountsTable(){
-  const body = document.getElementById('accountsTableBody');
-  if(!body) return;
-  if(admins.length === 0){
-    body.innerHTML = emptyRow(4, 'Chưa có tài khoản nào.');
-    return;
-  }
-  body.innerHTML = admins.map(a => `
+H\xE0nh \u0111\u1ED9ng n\xE0y s\u1EBD ghi d\u1EEF li\u1EC7u l\xEAn h\u1EC7 th\u1ED1ng.`,"X\xE1c nh\u1EADn nh\u1EADp",e==="replace")}async function Lo(){if(!A){m("Ch\u1EC9 Qu\u1EA3n tr\u1ECB vi\xEAn x\xE3 m\u1EDBi c\xF3 quy\u1EC1n nh\u1EADp d\u1EEF li\u1EC7u test","warn");return}if(!q){m("Vui l\xF2ng ch\u1ECDn file JSON h\u1EE3p l\u1EC7 tr\u01B0\u1EDBc khi nh\u1EADp","warn");return}let t=gt.filter(i=>Object.hasOwn(q.data,i));if(t.length===0){m("File kh\xF4ng c\xF3 dataset h\u1EE3p l\u1EC7 \u0111\u1EC3 nh\u1EADp","warn");return}let e=document.querySelector('input[name="testDataImportMode"]:checked')?.value||"replace";if(!await _o(q,e))return;$("testDataImportSubmit",!0,"Nh\u1EADp d\u1EEF li\u1EC7u");let n=q.invalid.map(i=>({...i,ok:!1})),a=0;try{for(let s of t){let u=$o(s,q.data[s],e),d=await Z(s,u);d.ok?(Bt(s,u),a+=q.counts[s],n.push({key:s,ok:!0})):n.push({key:s,ok:!1,reason:d.error})}if(n.filter(s=>s.ok).length===0){Ot(n),m("Kh\xF4ng th\u1EC3 nh\u1EADp d\u1EEF li\u1EC7u test","warn");return}let o=`${q.counts.products||0} s\u1EA3n ph\u1EA9m, ${q.counts.seasons||0} m\xF9a v\u1EE5, ${q.counts.households||0} h\u1ED9 tr\u1ED3ng`,c=await T(`Qu\u1EA3n tr\u1ECB vi\xEAn \u0111\xE3 nh\u1EADp d\u1EEF li\u1EC7u test t\u1EEB file: ${q.fileName} (${o}).`);if(c?.ok||n.push({key:"activity",ok:!1,reason:c?.error||"Kh\xF4ng th\u1EC3 ghi nh\u1EADt k\xFD ho\u1EA1t \u0111\u1ED9ng."}),B(),n.some(s=>!s.ok)){Ot(n),m("\u0110\xE3 nh\u1EADp m\u1ED9t ph\u1EA7n d\u1EEF li\u1EC7u test","warn");return}ln(),m(`\u0110\xE3 nh\u1EADp d\u1EEF li\u1EC7u test th\xE0nh c\xF4ng (${a} b\u1EA3n ghi)`,"ok")}finally{$("testDataImportSubmit",!1,"Nh\u1EADp d\u1EEF li\u1EC7u")}}function xo(){if(!A){m("Ch\u1EC9 Qu\u1EA3n tr\u1ECB vi\xEAn x\xE3 m\u1EDBi c\xF3 quy\u1EC1n nh\u1EADp d\u1EEF li\u1EC7u test","warn");return}let t={seasons:[{id:1,name:"V\u1EE5 rau an to\xE0n Thu \u0110\xF4ng 2026",crop:"C\u1EA3i xanh",householdId:1,region:"\u1EA4p B\u1ED1n Ph\xFA",start:"2026-09-01",end:"2026-12-15",area:1.5,yieldTon:18,price:14500,specialty:!1,status:"growing"},{id:2,name:"V\u1EE5 C\xE0 chua VietGAP 2026",crop:"C\xE0 chua",householdId:2,region:"\u1EA4p B\u1ED1n Ph\xFA",start:"2026-08-15",end:"2026-11-30",area:2,yieldTon:25,price:28e3,specialty:!1,status:"harvesting"},{id:3,name:"V\u1EE5 Ch\xF4m ch\xF4m \u0111\u01B0\u1EDDng ch\xEDn s\u1EDBm 2026",crop:"Ch\xF4m ch\xF4m",householdId:3,region:"\u1EA4p An H\xF2a",start:"2026-05-01",end:"2026-09-20",area:3.2,yieldTon:40,price:45e3,specialty:!0,status:"harvesting"},{id:4,name:"V\u1EE5 S\u01A1 ri xu\u1EA5t kh\u1EA9u 2026",crop:"S\u01A1 ri",householdId:4,region:"\u1EA4p An H\xF2a",start:"2026-06-10",end:"2026-10-30",area:1.8,yieldTon:22,price:35e3,specialty:!0,status:"harvesting"},{id:5,name:"V\u1EE5 Rau mu\u1ED1ng n\u01B0\u1EDBc s\xF4ng S\xE0i G\xF2n",crop:"Rau mu\u1ED1ng",householdId:5,region:"\u1EA4p 1",start:"2026-09-01",end:"2026-10-15",area:1,yieldTon:12,price:18e3,specialty:!1,status:"growing"}],households:[{id:1,name:"Nguy\u1EC5n V\u0103n B\xECnh",ap:"\u1EA4p B\u1ED1n Ph\xFA",crop:"C\u1EA3i xanh",area:1.5,years:6,phone:"0900000001",note:"H\u1EC7 th\u1ED1ng t\u01B0\u1EDBi t\u1EF1 \u0111\u1ED9ng"},{id:2,name:"Tr\u1EA7n Th\u1ECB Mai",ap:"\u1EA4p B\u1ED1n Ph\xFA",crop:"C\xE0 chua",area:2,years:8,phone:"0900000002",note:"Nh\xE0 m\xE0ng c\xF4ng ngh\u1EC7 cao"},{id:3,name:"L\xEA V\u0103n S\xE1u",ap:"\u1EA4p An H\xF2a",crop:"Ch\xF4m ch\xF4m",area:3.2,years:15,phone:"0900000003",note:"V\u01B0\u1EDDn ch\xF4m ch\xF4m h\u1EEFu c\u01A1 ven s\xF4ng"},{id:4,name:"Ph\u1EA1m Th\u1ECB H\u1EA1nh",ap:"\u1EA4p An H\xF2a",crop:"S\u01A1 ri",area:1.8,years:10,phone:"0900000004",note:"Canh t\xE1c theo chu\u1EA9n GlobalGAP"},{id:5,name:"V\xF5 V\u0103n \u0110\u01B0\u1EE3c",ap:"\u1EA4p 1",crop:"Rau mu\u1ED1ng",area:1,years:5,phone:"0900000005",note:"N\u01B0\u1EDBc ngu\u1ED3n ph\xF9 sa t\u1EF1 nhi\xEAn"}],qualityTests:[{id:1,seasonId:1,metric:"D\u01B0 l\u01B0\u1EE3ng thu\u1ED1c BVTV",value:.01,unit:"mg/kg",standard:"VietGAP / N\u1ED9i \u0111\u1ECBa",threshold:.1,date:"2026-10-10",lab:"Trung t\xE2m ki\u1EC3m \u0111\u1ECBnh B\xECnh M\u1EF9",result:"pass",note:"\u0110\u1EA1t ng\u01B0\u1EE1ng an to\xE0n"},{id:2,seasonId:2,metric:"Nitrat (NO3-)",value:120,unit:"mg/kg",standard:"VietGAP / N\u1ED9i \u0111\u1ECBa",threshold:500,date:"2026-09-20",lab:"Quatest 3",result:"pass",note:"H\xE0m l\u01B0\u1EE3ng nitrat an to\xE0n"},{id:3,seasonId:3,metric:"Kim lo\u1EA1i n\u1EB7ng (Ch\xEC Pb)",value:.005,unit:"mg/kg",standard:"Xu\u1EA5t kh\u1EA9u (GlobalGAP/MRL qu\u1ED1c t\u1EBF)",threshold:.02,date:"2026-09-05",lab:"Eurofins S\u1EAFc K\xFD H\u1EA3i \u0110\u0103ng",result:"pass",note:"\u0110\u1EA1t chu\u1EA9n xu\u1EA5t kh\u1EA9u"},{id:4,seasonId:4,metric:"Vi sinh E. coli",value:0,unit:"CFU/g",standard:"VietGAP / N\u1ED9i \u0111\u1ECBa",threshold:10,date:"2026-09-12",lab:"Trung t\xE2m ki\u1EC3m \u0111\u1ECBnh B\xECnh M\u1EF9",result:"pass",note:"\xC2m t\xEDnh vi sinh g\xE2y h\u1EA1i"}],outputs:[{id:1,seasonId:1,buyer:"HTX N\xF4ng s\u1EA3n Xanh B\xECnh M\u1EF9",channel:"Ch\u1EE3 \u0111\u1EA7u m\u1ED1i",volume:8,price:14500,date:"2026-12-12",status:"completed",note:""},{id:2,seasonId:2,buyer:"Si\xEAu th\u1ECB Co.opmart C\u1EE7 Chi",channel:"Si\xEAu th\u1ECB / c\u1EEDa h\xE0ng th\u1EF1c ph\u1EA9m s\u1EA1ch",volume:10,price:28e3,date:"2026-11-20",status:"completed",note:"Giao h\xE0ng \u0111\u1EE3t 1"}],procurements:[{id:1,postedDate:"2026-09-15",title:"Thu mua c\u1EA3i xanh an to\xE0n",buyer:"HTX N\xF4ng s\u1EA3n Xanh B\xECnh M\u1EF9",crop:"C\u1EA3i xanh",ap:"\u1EA4p B\u1ED1n Ph\xFA",quantity:8,unitLabel:"t\u1EA5n",priceOffer:14500,requirement:"Rau t\u01B0\u01A1i, \u0111\u1ED3ng \u0111\u1EC1u, chu\u1EA9n VietGAP",deadline:"2026-09-25",contactName:"Nguy\u1EC5n Minh Anh",contactPhone:"0900000002",note:"",status:"open",ownerUsername:"admin",applicants:[]},{id:2,postedDate:"2026-09-10",title:"Thu mua ch\xF4m ch\xF4m xu\u1EA5t kh\u1EA9u",buyer:"C\xF4ng ty Xu\u1EA5t nh\u1EADp kh\u1EA9u Tr\xE1i C\xE2y Mi\u1EC1n Nam",crop:"Ch\xF4m ch\xF4m",ap:"\u1EA4p An H\xF2a",quantity:15,unitLabel:"t\u1EA5n",priceOffer:45e3,requirement:"Tr\xE1i ch\xEDn \u0111\u1EC1u, kh\xF4ng d\u1EADp",deadline:"2026-09-30",contactName:"Tr\u1EA7n V\u0103n Ti\u1EBFn",contactPhone:"0900000006",note:"",status:"open",ownerUsername:"admin",applicants:[]}],products:[{id:1,productCode:"BM-2026-001",batchCode:"L\xD4-01",name:"C\u1EA3i xanh an to\xE0n B\xECnh M\u1EF9",sellerName:"Nguy\u1EC5n V\u0103n B\xECnh",ap:"\u1EA4p B\u1ED1n Ph\xFA",quantity:120,unitLabel:"kg",price:25e3,harvestDate:"2026-09-14",certification:"VietGAP",image:"https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80",contactName:"Nguy\u1EC5n V\u0103n B\xECnh",contactPhone:"0900000001",note:"Rau c\u1EA3i xanh t\u01B0\u01A1i gi\xF2n thu ho\u1EA1ch s\xE1ng s\u1EDBm, kh\xF4ng thu\u1ED1c tr\u1EEB s\xE2u h\xF3a h\u1ECDc.",status:"available",postedDate:"2026-09-14",ownerUsername:"admin",buyRequests:[]},{id:2,productCode:"BM-2026-002",batchCode:"L\xD4-02",name:"C\xE0 chua bi h\u1EEFu c\u01A1",sellerName:"Tr\u1EA7n Th\u1ECB Mai",ap:"\u1EA4p B\u1ED1n Ph\xFA",quantity:80,unitLabel:"kg",price:3e4,harvestDate:"2026-09-15",certification:"VietGAP",image:"https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&w=600&q=80",contactName:"Tr\u1EA7n Th\u1ECB Mai",contactPhone:"0900000002",note:"C\xE0 chua ng\u1ECDt \u0111\u1EADm, v\u1ECF m\u1ECFng, tr\u1ED3ng trong nh\xE0 m\xE0ng c\xF4ng ngh\u1EC7 cao.",status:"available",postedDate:"2026-09-15",ownerUsername:"admin",buyRequests:[]},{id:3,productCode:"BM-2026-003",batchCode:"L\xD4-03",name:"Ch\xF4m ch\xF4m Th\xE1i B\xECnh M\u1EF9",sellerName:"L\xEA V\u0103n S\xE1u",ap:"\u1EA4p An H\xF2a",quantity:50,unitLabel:"kg",price:45e3,harvestDate:"2026-09-13",certification:"Xu\u1EA5t kh\u1EA9u (GlobalGAP)",image:"https://images.unsplash.com/photo-1587132137056-bfbf0166836e?auto=format&fit=crop&w=600&q=80",contactName:"L\xEA V\u0103n S\xE1u",contactPhone:"0900000003",note:"Ch\xF4m ch\xF4m c\xF9i d\xE0y tr\xF3c h\u1ED9t, v\u1ECB ng\u1ECDt thanh m\xE1t, h\xE1i t\u1EA1i v\u01B0\u1EDDn ven s\xF4ng.",status:"available",postedDate:"2026-09-13",ownerUsername:"admin",buyRequests:[]},{id:4,productCode:"BM-2026-004",batchCode:"L\xD4-04",name:"S\u01A1 ri ng\u1ECDt An H\xF2a",sellerName:"Ph\u1EA1m Th\u1ECB H\u1EA1nh",ap:"\u1EA4p An H\xF2a",quantity:35,unitLabel:"kg",price:35e3,harvestDate:"2026-09-14",certification:"VietGAP",image:"https://images.unsplash.com/photo-1528825871115-3581a5387919?auto=format&fit=crop&w=600&q=80",contactName:"Ph\u1EA1m Th\u1ECB H\u1EA1nh",contactPhone:"0900000004",note:"S\u01A1 ri ch\xEDn m\u1ECDng, gi\xE0u vitamin C, h\xE1i tuy\u1EC3n t\u1EEBng tr\xE1i.",status:"available",postedDate:"2026-09-14",ownerUsername:"admin",buyRequests:[]},{id:5,productCode:"BM-2026-005",batchCode:"L\xD4-05",name:"Rau mu\u1ED1ng n\u01B0\u1EDBc s\u1EA1ch B\xECnh M\u1EF9",sellerName:"V\xF5 V\u0103n \u0110\u01B0\u1EE3c",ap:"\u1EA4p 1",quantity:150,unitLabel:"kg",price:18e3,harvestDate:"2026-09-15",certification:"Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh",image:"https://images.unsplash.com/photo-1550989460-0adf9ea622e2?auto=format&fit=crop&w=600&q=80",contactName:"V\xF5 V\u0103n \u0110\u01B0\u1EE3c",contactPhone:"0900000005",note:"Rau mu\u1ED1ng ng\u1ECDn non, th\xE2n gi\xF2n n\u01B0\u1EDBc, tr\u1ED3ng theo ngu\u1ED3n n\u01B0\u1EDBc t\u1EF1 nhi\xEAn.",status:"available",postedDate:"2026-09-15",ownerUsername:"admin",buyRequests:[]}],activity:[]},e=URL.createObjectURL(new Blob([JSON.stringify(t,null,2)],{type:"application/json"})),n=document.createElement("a");n.href=e,n.download="binh-my-test-data.json",n.click(),setTimeout(()=>URL.revokeObjectURL(e),0)}function jt(){let t=document.getElementById("accountsTableBody");if(t){if(G.length===0){t.innerHTML=ht(4,"Ch\u01B0a c\xF3 t\xE0i kho\u1EA3n n\xE0o.");return}t.innerHTML=G.map(e=>`
     <tr>
-      <td><strong>${esc(a.user)}</strong>${a.uid === currentUser.uid ? ' <span class="chip chip-growing">Tài khoản của bạn</span>' : ''}</td>
-      <td>${roleLabel(a.role)}</td>
-      <td>${esc(a.ap) || 'Toàn xã'}</td>
+      <td><strong>${r(e.user)}</strong>${e.uid===h.uid?' <span class="chip chip-growing">T\xE0i kho\u1EA3n c\u1EE7a b\u1EA1n</span>':""}</td>
+      <td>${$t(e.role)}</td>
+      <td>${r(e.ap)||"To\xE0n x\xE3"}</td>
       <td class="row-actions">
-        <button class="btn btn-sm" onclick="openAccountForm('${a.uid}')">Sửa</button>
-        ${a.uid !== currentUser.uid ? `<button class="btn btn-sm btn-danger" onclick="deleteAccount('${a.uid}')">Xóa</button>` : ''}
+        <button class="btn btn-sm" onclick="openAccountForm('${e.uid}')">S\u1EEDa</button>
+        ${e.uid!==h.uid?`<button class="btn btn-sm btn-danger" onclick="deleteAccount('${e.uid}')">X\xF3a</button>`:""}
       </td>
-    </tr>`).join('');
-}
+    </tr>`).join("")}}function dn(){let t=document.getElementById("acc_ap_field");t&&(t.style.display=document.getElementById("acc_role").value==="ward"?"block":"none")}function So(t){if(A){if(document.getElementById("accountFormError").style.display="none",document.getElementById("accountFormOverlay").classList.add("show"),t){let e=G.find(n=>n.uid===t);document.getElementById("accountFormTitle").textContent="S\u1EEDa t\xE0i kho\u1EA3n c\xE1n b\u1ED9",document.getElementById("acc_editUser").value=t,document.getElementById("acc_user").value=e.user,document.getElementById("acc_user").disabled=!0,document.getElementById("acc_pass").value="",document.getElementById("acc_pass").placeholder="\u0110\u1EC3 tr\u1ED1ng n\u1EBFu kh\xF4ng \u0111\u1ED5i m\u1EADt kh\u1EA9u",document.getElementById("acc_pass").disabled=!0,document.getElementById("acc_role").value=e.role,document.getElementById("acc_ap").value=e.ap||""}else document.getElementById("accountFormTitle").textContent="Th\xEAm t\xE0i kho\u1EA3n c\xE1n b\u1ED9",document.getElementById("acc_editUser").value="",document.getElementById("acc_user").value="",document.getElementById("acc_user").disabled=!1,document.getElementById("acc_pass").value="",document.getElementById("acc_pass").placeholder="\u2022\u2022\u2022\u2022\u2022\u2022",document.getElementById("acc_pass").disabled=!1,document.getElementById("acc_role").value="ward",document.getElementById("acc_ap").value="";dn()}}function mn(){document.getElementById("accountFormOverlay").classList.remove("show")}async function To(){let t=document.getElementById("acc_editUser").value,e=document.getElementById("acc_user").value.trim(),n=document.getElementById("acc_pass").value,a=document.getElementById("acc_role").value,i=a==="ward"?document.getElementById("acc_ap").value.trim():null,o=document.getElementById("accountFormError");if(!mt(e)||!t&&!n||a==="ward"&&!i){o.textContent=mt(e)?"Vui l\xF2ng nh\u1EADp \u0111\u1EA7y \u0111\u1EE7 th\xF4ng tin.":"Vui l\xF2ng nh\u1EADp \u0111\u1ECBnh d\u1EA1ng email h\u1EE3p l\u1EC7 cho t\xE0i kho\u1EA3n.",o.style.display="block";return}if(!t&&n.length<8){o.textContent="M\u1EADt kh\u1EA9u ph\u1EA3i c\xF3 \xEDt nh\u1EA5t 8 k\xFD t\u1EF1.",o.style.display="block";return}try{if(t)await kn(D(P,"admins",t),{role:a,ap:i}),h.uid===t&&(h={...h,role:a,ap:i});else{if(G.some(s=>s.user===e)){o.textContent="T\xEAn t\xE0i kho\u1EA3n n\xE0y \u0111\xE3 t\u1ED3n t\u1EA1i.",o.style.display="block";return}let c=await Dn(Hn(e),n);await ne(D(P,"admins",c),{user:e,role:a,ap:i})}await T((t?"C\u1EADp nh\u1EADt t\xE0i kho\u1EA3n c\xE1n b\u1ED9: ":"Th\xEAm t\xE0i kho\u1EA3n c\xE1n b\u1ED9 m\u1EDBi: ")+e+" ("+$t(a)+")"),mn(),jt(),B(),m("\u0110\xE3 l\u01B0u th\xF4ng tin t\xE0i kho\u1EA3n","ok")}catch(c){o.textContent="L\u1ED7i: "+c.message,o.style.display="block"}}async function qo(t){let e=G.find(i=>i.uid===t);if(!e)return;if(t===h.uid){m("Kh\xF4ng th\u1EC3 t\u1EF1 x\xF3a t\xE0i kho\u1EA3n \u0111ang \u0111\u0103ng nh\u1EADp","warn");return}let n=G.filter(i=>i.role==="super"&&i.uid!==t);if(e.role==="super"&&n.length===0){m("H\u1EC7 th\u1ED1ng ph\u1EA3i gi\u1EEF l\u1EA1i \xEDt nh\u1EA5t 1 Qu\u1EA3n tr\u1ECB vi\xEAn x\xE3","warn");return}await J("X\xF3a t\xE0i kho\u1EA3n c\xE1n b\u1ED9",`X\xF3a t\xE0i kho\u1EA3n "${e.user}" (${$t(e.role)}) kh\u1ECFi danh s\xE1ch ph\xE2n quy\u1EC1n?`,"X\xF3a t\xE0i kho\u1EA3n",!0)&&(await Cn(D(P,"admins",t)),await T("X\xF3a t\xE0i kho\u1EA3n c\xE1n b\u1ED9: "+e.user),jt(),m("\u0110\xE3 x\xF3a t\xE0i kho\u1EA3n","warn"))}function hn(t){if(t&&!L(y.find(a=>a.id===t)?.region)){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n s\u1EEDa m\xF9a v\u1EE5 n\xE0y","warn");return}w("formOverlay"),document.getElementById("formOverlay").classList.add("show"),O(document.getElementById("formOverlay"));let e=document.getElementById("f_household");e.innerHTML='<option value="">\u2014 Ch\u01B0a g\xE1n h\u1ED9 tr\u1ED3ng \u2014</option>'+k.map(a=>`<option value="${a.id}">${r(a.name)} (${r(a.ap)})</option>`).join("");let n=document.getElementById("f_region");if(t){let a=y.find(i=>i.id===t);document.getElementById("formTitle").textContent="S\u1EEDa th\xF4ng tin m\xF9a v\u1EE5",document.getElementById("editId").value=t,document.getElementById("f_name").value=a.name,document.getElementById("f_crop").value=a.crop,e.value=a.householdId||"",n.value=a.region,document.getElementById("f_start").value=a.start,document.getElementById("f_end").value=a.end,document.getElementById("f_area").value=a.area,document.getElementById("f_yield").value=a.yieldTon,document.getElementById("f_price").value=a.price||"",document.getElementById("f_specialty").checked=!!a.specialty,document.getElementById("f_status").value=a.status}else document.getElementById("formTitle").textContent="Th\xEAm m\xF9a v\u1EE5 canh t\xE1c",document.getElementById("editId").value="",e.value="",["f_name","f_crop","f_region","f_start","f_end","f_area","f_yield","f_price"].forEach(a=>document.getElementById(a).value=""),document.getElementById("f_specialty").checked=!1,document.getElementById("f_status").value="plan",h&&h.role==="ward"&&(n.value=h.ap);n.disabled=!!(h&&h.role==="ward")}function pn(){document.getElementById("formOverlay").classList.remove("show"),document.getElementById("f_region").disabled=!1,w("formOverlay"),M()}async function Po(){if(!S){m("Ch\u1EC9 c\xE1n b\u1ED9 n\xF4ng nghi\u1EC7p c\xF3 quy\u1EC1n l\u01B0u m\xF9a v\u1EE5","warn");return}w("formOverlay");let t=document.getElementById("editId").value,e=document.getElementById("f_name").value.trim(),n=document.getElementById("f_crop").value.trim(),a=h&&h.role==="ward"?h.ap:document.getElementById("f_region").value.trim(),i=document.getElementById("f_start").value,o=document.getElementById("f_end").value,c=document.getElementById("f_area").value.trim(),s=document.getElementById("f_yield").value.trim(),u=!1;if(e||(b("f_name","err_f_name","Vui l\xF2ng nh\u1EADp t\xEAn m\xF9a v\u1EE5."),u=!0),n||(b("f_crop","err_f_crop","Vui l\xF2ng nh\u1EADp lo\u1EA1i c\xE2y tr\u1ED3ng."),u=!0),a||(b("f_region","err_f_region","Vui l\xF2ng ch\u1ECDn ho\u1EB7c nh\u1EADp \u1EA5p canh t\xE1c."),u=!0),i&&o&&o<i&&(b("f_end","err_f_end","Ng\xE0y k\u1EBFt th\xFAc kh\xF4ng th\u1EC3 tr\u01B0\u1EDBc ng\xE0y b\u1EAFt \u0111\u1EA7u."),u=!0),(!c||Number(c)<=0)&&(b("f_area","err_f_area","Di\u1EC7n t\xEDch canh t\xE1c ph\u1EA3i l\u1EDBn h\u01A1n 0."),u=!0),(s===""||Number(s)<0)&&(b("f_yield","err_f_yield","S\u1EA3n l\u01B0\u1EE3ng thu ho\u1EA1ch kh\xF4ng h\u1EE3p l\u1EC7."),u=!0),u)return;let d={name:e,crop:n,householdId:document.getElementById("f_household").value?Number(document.getElementById("f_household").value):null,region:a,start:i,end:o,area:Number(c),yieldTon:Number(s||0),price:Number(document.getElementById("f_price").value||0),specialty:document.getElementById("f_specialty").checked,status:document.getElementById("f_status").value};if(!L(d.region)){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n ph\u1EE5 tr\xE1ch \u0111\u1ECBa b\xE0n \u1EA5p n\xE0y","warn");return}$("btnSaveSeason",!0);try{if(t){let l=y.findIndex(g=>g.id===Number(t));y[l]={...y[l],...d}}else{let l=y.length?Math.max(...y.map(g=>g.id))+1:1;y.push({id:l,...d})}await se(),await T((t?"C\u1EADp nh\u1EADt m\xF9a v\u1EE5: ":"Th\xEAm m\xF9a v\u1EE5 m\u1EDBi: ")+d.name+" \u2014 b\u1EDFi "+h.user),pn(),B(),m("\u0110\xE3 l\u01B0u th\xF4ng tin m\xF9a v\u1EE5","ok")}catch(l){console.error(l),m("L\u1ED7i khi l\u01B0u m\xF9a v\u1EE5: "+l.message,"warn")}finally{$("btnSaveSeason",!1)}}async function Ao(t){let e=y.find(c=>c.id===t);if(!L(e?.region)){m("B\u1EA1n kh\xF4ng c\xF3 quy\u1EC1n x\xF3a m\xF9a v\u1EE5 n\xE0y","warn");return}let n=I.filter(c=>c.seasonId===t).length,a=C.filter(c=>c.seasonId===t).length,i=`B\u1EA1n c\xF3 ch\u1EAFc mu\u1ED1n x\xF3a m\xF9a v\u1EE5 "${e?.name}"?`;(n>0||a>0)&&(i+=`
+L\u01B0u \xFD: M\xF9a v\u1EE5 n\xE0y \u0111ang c\xF3 ${n} l\u1EA7n ki\u1EC3m \u0111\u1ECBnh v\xE0 ${a} giao d\u1ECBch \u0111\u1EA7u ra li\xEAn k\u1EBFt. Khi x\xF3a, c\xE1c d\u1EEF li\u1EC7u n\xE0y s\u1EBD \u0111\u01B0\u1EE3c h\u1EE7y g\xE1n m\xF9a v\u1EE5 \u0111\u1EC3 b\u1EA3o to\xE0n b\xE1o c\xE1o.`),await J("X\xE1c nh\u1EADn x\xF3a m\xF9a v\u1EE5",i,"X\xF3a m\xF9a v\u1EE5",!0)&&(y=y.filter(c=>c.id!==t),I.forEach(c=>{c.seasonId===t&&(c.seasonId=null)}),C.forEach(c=>{c.seasonId===t&&(c.seasonId=null)}),await se(),await re(),await le(),await T("X\xF3a m\xF9a v\u1EE5: "+(e?e.name:"")+" \u2014 b\u1EDFi "+h.user),B(),m("\u0110\xE3 x\xF3a m\xF9a v\u1EE5 v\xE0 c\u1EADp nh\u1EADt c\xE1c li\xEAn k\u1EBFt","warn"))}async function Mo(t){let a=(await ae(ie,"askAI")({prompt:t}))?.data?.text;if(!a)throw new Error("Kh\xF4ng c\xF3 ph\u1EA3n h\u1ED3i t\u1EEB m\xE1y ch\u1EE7 AI");return a}function No(t){let e=t.toLowerCase();if(e.includes("n\u0103ng su\u1EA5t th\u1EA5p")||e.includes("k\xE9m nh\u1EA5t")||e.includes("s\u1EA3n l\u01B0\u1EE3ng th\u1EA5p")){if(y.length===0)return"Hi\u1EC7n ch\u01B0a c\xF3 d\u1EEF li\u1EC7u m\xF9a v\u1EE5 n\xE0o trong h\u1EC7 th\u1ED1ng \u0111\u1EC3 ph\xE2n t\xEDch n\u0103ng su\u1EA5t.";let i=[...y.filter(c=>Number(c.area||0)>0)].sort((c,s)=>Y(c)-Y(s))[0],o=Y(i).toFixed(2);return`\u{1F4CA} **Ph\xE2n t\xEDch n\u0103ng su\u1EA5t:**
+- M\xF9a v\u1EE5 c\xF3 n\u0103ng su\u1EA5t th\u1EA5p nh\u1EA5t hi\u1EC7n nay l\xE0 **${i.name}** (${i.crop} t\u1EA1i ${i.region}), \u0111\u1EA1t **${o} t\u1EA5n/ha** (s\u1EA3n l\u01B0\u1EE3ng ${i.yieldTon} t\u1EA5n tr\xEAn di\u1EC7n t\xEDch ${i.area} ha).
+- **\u0110\u1EC1 xu\u1EA5t kh\u1EAFc ph\u1EE5c:** H\u1ED9 tr\u1ED3ng n\xEAn ki\u1EC3m tra l\u1EA1i h\u1EC7 th\u1ED1ng t\u01B0\u1EDBi ti\xEAu ven s\xF4ng, b\u1ED5 sung ph\xE2n h\u1EEFu c\u01A1 vi sinh v\xE0 \u0111\u1ED1i chi\u1EBFu l\u1ECBch b\xF3n ph\xE2n c\xE2n \u0111\u1ED1i gi\u1EEFa \u0111\u1EA1m, l\xE2n, kali theo khuy\u1EBFn c\xE1o c\u1EE7a Chi c\u1EE5c Tr\u1ED3ng tr\u1ECDt & BVTV.`}if(e.includes("ki\u1EC3m \u0111\u1ECBnh")||e.includes("kh\xF4ng \u0111\u1EA1t")||e.includes("ch\u1EA5t l\u01B0\u1EE3ng")||e.includes("d\u01B0 l\u01B0\u1EE3ng")){let n=I.filter(i=>i.result==="fail");if(n.length===0)return`\u2705 **B\xE1o c\xE1o an to\xE0n th\u1EF1c ph\u1EA9m:**
+Hi\u1EC7n t\u1EA1i **100% c\xE1c l\u1EA7n ki\u1EC3m \u0111\u1ECBnh \u0111\xE3 c\xF3 k\u1EBFt qu\u1EA3 \u0111\u1EC1u \u0111\u1EA1t chu\u1EA9n an to\xE0n** (VietGAP/Si\xEAu th\u1ECB/Xu\u1EA5t kh\u1EA9u). To\xE0n x\xE3 ghi nh\u1EADn ${I.length} l\u01B0\u1EE3t ki\u1EC3m nghi\u1EC7m kh\xF4ng ph\xE1t hi\u1EC7n d\u01B0 l\u01B0\u1EE3ng h\xF3a ch\u1EA5t v\u01B0\u1EE3t ng\u01B0\u1EE1ng cho ph\xE9p.`;let a=n.map(i=>`- **${K(i.seasonId)}**: Ch\u1EC9 ti\xEAu *${i.metric}* \u0111o \u0111\u01B0\u1EE3c ${i.value} ${i.unit||""} (v\u01B0\u1EE3t ng\u01B0\u1EE1ng cho ph\xE9p ${i.threshold} ${i.unit||""}). Ti\xEAu chu\u1EA9n: ${i.standard}.`).join(`
+`);return`\u26A0\uFE0F **C\u1EA3nh b\xE1o ki\u1EC3m \u0111\u1ECBnh ch\u1EA5t l\u01B0\u1EE3ng:**
+Hi\u1EC7n c\xF3 **${n.length} ch\u1EC9 ti\xEAu ki\u1EC3m \u0111\u1ECBnh ch\u01B0a \u0111\u1EA1t chu\u1EA9n**:
+${a}
 
-function toggleAccountApField(){
-  const field = document.getElementById('acc_ap_field');
-  if(field){
-    field.style.display = document.getElementById('acc_role').value === 'ward' ? 'block' : 'none';
-  }
-}
+\u{1F4A1} **Khuy\u1EBFn ngh\u1ECB k\u1EF9 thu\u1EADt:**
+1. K\xE9o d\xE0i th\u1EDDi gian c\xE1ch ly tr\u01B0\u1EDBc thu ho\u1EA1ch (t\u1ED1i thi\u1EC3u 14 ng\xE0y \u0111\u1ED1i v\u1EDBi thu\u1ED1c BVTV sinh h\u1ECDc).
+2. Gi\u1EA3m li\u1EC1u l\u01B0\u1EE3ng ph\xE2n \u0111\u1EA1m nitrat, thay th\u1EBF b\u1EB1ng ph\xE2n chu\u1ED3ng hoai m\u1EE5c \u1EE7 n\u1EA5m Trichoderma.
+3. L\u1EA5y m\u1EABu x\xE9t nghi\u1EC7m l\u1EA1i tr\u01B0\u1EDBc khi \u0111\xF3ng g\xF3i xu\u1EA5t x\u01B0\u1EDFng.`}if(e.includes("\u0111\u1EA7u ra")||e.includes("ch\xF4m ch\xF4m")||e.includes("ti\xEAu th\u1EE5")||e.includes("th\u01B0\u01A1ng l\xE1i")){let a=E.filter(o=>o.status==="open").filter(o=>o.crop.toLowerCase().includes("ch\xF4m ch\xF4m")||o.crop.toLowerCase().includes("tr\xE1i c\xE2y")||o.crop.toLowerCase().includes("rau")),i=`\u{1F91D} **G\u1EE3i \xFD k\u1EBFt n\u1ED1i \u0111\u1EA7u ra:**
+`;return a.length>0?i+=`Hi\u1EC7n \u0111ang c\xF3 **${a.length} tin thu mua ph\xF9 h\u1EE3p** tr\xEAn h\u1EC7 th\u1ED1ng:
+`+a.map(o=>`- Tin: **${o.title}** (${o.buyer}) \u2014 C\u1EA7n ${o.quantity} ${o.unitLabel||"t\u1EA5n"} ${o.crop} t\u1EA1i ${o.ap}. Gi\xE1 ch\xE0o mua: ${o.priceOffer?_(o.priceOffer)+" \u0111/kg":"Th\u1ECFa thu\u1EADn"}.`).join(`
+`):i+="Hi\u1EC7n c\xE1c tin thu mua chuy\xEAn bi\u1EC7t \u0111ang \u0111\u1EE7 ngu\u1ED3n. Tuy nhi\xEAn qua th\u1ED1ng k\xEA k\xEAnh ti\xEAu th\u1EE5 x\xE3, k\xEAnh **Si\xEAu th\u1ECB trong n\u01B0\u1EDBc** v\xE0 **Ch\u1EE3 \u0111\u1EA7u m\u1ED1i H\xF3c M\xF4n/Th\u1EE7 \u0110\u1EE9c** \u0111ang gi\u1EEF gi\xE1 b\xECnh \u1ED5n cao nh\u1EA5t cho n\xF4ng s\u1EA3n B\xECnh M\u1EF9 (kho\u1EA3ng 35.000 - 55.000 \u0111/kg \u0111\u1ED1i v\u1EDBi tr\xE1i c\xE2y \u0111\u1EA1t chu\u1EA9n VietGAP).",i}if(e.includes("gi\xE1 tr\u1ECB")||e.includes("kinh t\u1EBF")||e.includes("t\u1ED5ng doanh thu")||e.includes("\u01B0\u1EDBc t\xEDnh")){let n=y.reduce((c,s)=>c+W(s),0),a=y.reduce((c,s)=>c+Number(s.yieldTon||0),0),i=y.reduce((c,s)=>c+Number(s.area||0),0),o=C.filter(c=>c.status==="done").reduce((c,s)=>c+Mt(s),0);return`\u{1F4B0} **\u01AF\u1EDBc t\xEDnh kinh t\u1EBF n\xF4ng nghi\u1EC7p x\xE3 B\xECnh M\u1EF9:**
+- **T\u1ED5ng gi\xE1 tr\u1ECB thu ho\u1EA1ch \u01B0\u1EDBc t\xEDnh:** **${_(n)} \u0111** (~${(n/1e9).toFixed(2)} t\u1EF7 \u0111\u1ED3ng).
+- **T\u1ED5ng s\u1EA3n l\u01B0\u1EE3ng:** ${_(a)} t\u1EA5n tr\xEAn ${_(i)} ha \u0111\u1EA5t canh t\xE1c.
+- **Doanh thu \u0111\xE3 th\u1EF1c hi\u1EC7n qua h\u1EE3p \u0111\u1ED3ng:** ${_(o)} \u0111.
+- **Gi\xE1 tr\u1ECB trung b\xECnh m\u1ED7i hecta:** ${i>0?_(Math.round(n/i)):0} \u0111/ha.`}return`\u{1F33E} **Tr\u1EE3 l\xFD N\xF4ng nghi\u1EC7p B\xECnh M\u1EF9:**
+H\u1EC7 th\u1ED1ng hi\u1EC7n \u0111ang qu\u1EA3n l\xFD **${y.length} m\xF9a v\u1EE5**, **${k.length} h\u1ED9 tr\u1ED3ng**, **${E.length} tin thu mua** v\xE0 **${v.length} m\u1EB7t h\xE0ng ch\xE0o b\xE1n**.
 
-function openAccountForm(uid){
-  if(!isSuperAdmin) return;
-  document.getElementById('accountFormError').style.display = 'none';
-  document.getElementById('accountFormOverlay').classList.add('show');
-  if(uid){
-    const a = admins.find(x => x.uid === uid);
-    document.getElementById('accountFormTitle').textContent = 'Sửa tài khoản cán bộ';
-    document.getElementById('acc_editUser').value = uid;
-    document.getElementById('acc_user').value = a.user;
-    document.getElementById('acc_user').disabled = true;
-    document.getElementById('acc_pass').value = '';
-    document.getElementById('acc_pass').placeholder = 'Để trống nếu không đổi mật khẩu';
-    document.getElementById('acc_pass').disabled = true;
-    document.getElementById('acc_role').value = a.role;
-    document.getElementById('acc_ap').value = a.ap || '';
-  }else{
-    document.getElementById('accountFormTitle').textContent = 'Thêm tài khoản cán bộ';
-    document.getElementById('acc_editUser').value = '';
-    document.getElementById('acc_user').value = '';
-    document.getElementById('acc_user').disabled = false;
-    document.getElementById('acc_pass').value = '';
-    document.getElementById('acc_pass').placeholder = '••••••';
-    document.getElementById('acc_pass').disabled = false;
-    document.getElementById('acc_role').value = 'ward';
-    document.getElementById('acc_ap').value = '';
-  }
-  toggleAccountApField();
-}
-
-function closeAccountForm(){
-  document.getElementById('accountFormOverlay').classList.remove('show');
-}
-
-async function saveAccountForm(){
-  const editUid = document.getElementById('acc_editUser').value;
-  const user = document.getElementById('acc_user').value.trim();
-  const pass = document.getElementById('acc_pass').value;
-  const role = document.getElementById('acc_role').value;
-  const ap = role === 'ward' ? document.getElementById('acc_ap').value.trim() : null;
-  const err = document.getElementById('accountFormError');
-
-  if(!isEmail(user) || (!editUid && !pass) || (role === 'ward' && !ap)){
-    err.textContent = !isEmail(user) ? 'Vui lòng nhập định dạng email hợp lệ cho tài khoản.' : 'Vui lòng nhập đầy đủ thông tin.';
-    err.style.display = 'block';
-    return;
-  }
-  if(!editUid && pass.length < 8){
-    err.textContent = 'Mật khẩu phải có ít nhất 8 ký tự.';
-    err.style.display = 'block';
-    return;
-  }
-
-  try{
-    if(editUid){
-      await updateDoc(doc(db, 'admins', editUid), { role, ap });
-      if(currentUser.uid === editUid) currentUser = { ...currentUser, role, ap };
-    }else{
-      if(admins.some(a => a.user === user)){
-        err.textContent = 'Tên tài khoản này đã tồn tại.';
-        err.style.display = 'block';
-        return;
-      }
-      const uid = await createAuthUserWithoutSignIn(adminEmail(user), pass);
-      await setDoc(doc(db, 'admins', uid), { user, role, ap });
-    }
-    await logActivity((editUid ? 'Cập nhật tài khoản cán bộ: ' : 'Thêm tài khoản cán bộ mới: ') + user + ' (' + roleLabel(role) + ')');
-    closeAccountForm();
-    renderAccountsTable();
-    renderAll();
-    toast('Đã lưu thông tin tài khoản', 'ok');
-  }catch(e){
-    err.textContent = 'Lỗi: ' + e.message;
-    err.style.display = 'block';
-  }
-}
-
-async function deleteAccount(uid){
-  const target = admins.find(a => a.uid === uid);
-  if(!target) return;
-  if(uid === currentUser.uid){
-    toast('Không thể tự xóa tài khoản đang đăng nhập', 'warn');
-    return;
-  }
-  const remainingSupers = admins.filter(a => a.role === 'super' && a.uid !== uid);
-  if(target.role === 'super' && remainingSupers.length === 0){
-    toast('Hệ thống phải giữ lại ít nhất 1 Quản trị viên xã', 'warn');
-    return;
-  }
-  const ok = await showConfirmDialog(
-    'Xóa tài khoản cán bộ',
-    `Xóa tài khoản "${target.user}" (${roleLabel(target.role)}) khỏi danh sách phân quyền?`,
-    'Xóa tài khoản',
-    true
-  );
-  if(!ok) return;
-
-  await deleteDoc(doc(db, 'admins', uid));
-  await logActivity('Xóa tài khoản cán bộ: ' + target.user);
-  renderAccountsTable();
-  toast('Đã xóa tài khoản', 'warn');
-}
-
-/* ============ Quản lý mùa vụ (Thêm / Sửa / Xóa) ============ */
-function openForm(id){
-  if(id && !canManage(seasons.find(x => x.id === id)?.region)){
-    toast('Bạn không có quyền sửa mùa vụ này', 'warn');
-    return;
-  }
-  clearFieldErrors('formOverlay');
-  document.getElementById('formOverlay').classList.add('show');
-  const hhSelect = document.getElementById('f_household');
-  hhSelect.innerHTML = '<option value="">— Chưa gán hộ trồng —</option>' +
-    households.map(h => `<option value="${h.id}">${esc(h.name)} (${esc(h.ap)})</option>`).join('');
-  const regionInput = document.getElementById('f_region');
-
-  if(id){
-    const s = seasons.find(x => x.id === id);
-    document.getElementById('formTitle').textContent = 'Sửa thông tin mùa vụ';
-    document.getElementById('editId').value = id;
-    document.getElementById('f_name').value = s.name;
-    document.getElementById('f_crop').value = s.crop;
-    hhSelect.value = s.householdId || '';
-    regionInput.value = s.region;
-    document.getElementById('f_start').value = s.start;
-    document.getElementById('f_end').value = s.end;
-    document.getElementById('f_area').value = s.area;
-    document.getElementById('f_yield').value = s.yieldTon;
-    document.getElementById('f_price').value = s.price || '';
-    document.getElementById('f_specialty').checked = !!s.specialty;
-    document.getElementById('f_status').value = s.status;
-  }else{
-    document.getElementById('formTitle').textContent = 'Thêm mùa vụ canh tác';
-    document.getElementById('editId').value = '';
-    hhSelect.value = '';
-    ['f_name','f_crop','f_region','f_start','f_end','f_area','f_yield','f_price'].forEach(k => document.getElementById(k).value = '');
-    document.getElementById('f_specialty').checked = false;
-    document.getElementById('f_status').value = 'plan';
-    if(currentUser && currentUser.role === 'ward') regionInput.value = currentUser.ap;
-  }
-  regionInput.disabled = !!(currentUser && currentUser.role === 'ward');
-}
-
-function closeForm(){
-  document.getElementById('formOverlay').classList.remove('show');
-  document.getElementById('f_region').disabled = false;
-  clearFieldErrors('formOverlay');
-}
-
-async function saveForm(){
-  if(!isAdmin){
-    toast('Chỉ cán bộ nông nghiệp có quyền lưu mùa vụ', 'warn');
-    return;
-  }
-  clearFieldErrors('formOverlay');
-
-  const id = document.getElementById('editId').value;
-  const nameVal = document.getElementById('f_name').value.trim();
-  const cropVal = document.getElementById('f_crop').value.trim();
-  const regionVal = (currentUser && currentUser.role === 'ward') ? currentUser.ap : document.getElementById('f_region').value.trim();
-  const startVal = document.getElementById('f_start').value;
-  const endVal = document.getElementById('f_end').value;
-  const areaVal = document.getElementById('f_area').value.trim();
-  const yieldVal = document.getElementById('f_yield').value.trim();
-
-  let hasErr = false;
-  if(!nameVal){
-    setFieldError('f_name', 'err_f_name', 'Vui lòng nhập tên mùa vụ.');
-    hasErr = true;
-  }
-  if(!cropVal){
-    setFieldError('f_crop', 'err_f_crop', 'Vui lòng nhập loại cây trồng.');
-    hasErr = true;
-  }
-  if(!regionVal){
-    setFieldError('f_region', 'err_f_region', 'Vui lòng chọn hoặc nhập ấp canh tác.');
-    hasErr = true;
-  }
-  if(startVal && endVal && endVal < startVal){
-    setFieldError('f_end', 'err_f_end', 'Ngày kết thúc không thể trước ngày bắt đầu.');
-    hasErr = true;
-  }
-  if(!areaVal || Number(areaVal) <= 0){
-    setFieldError('f_area', 'err_f_area', 'Diện tích canh tác phải lớn hơn 0.');
-    hasErr = true;
-  }
-  if(yieldVal === '' || Number(yieldVal) < 0){
-    setFieldError('f_yield', 'err_f_yield', 'Sản lượng thu hoạch không hợp lệ.');
-    hasErr = true;
-  }
-  if(hasErr) return;
-
-  const record = {
-    name: nameVal,
-    crop: cropVal,
-    householdId: document.getElementById('f_household').value ? Number(document.getElementById('f_household').value) : null,
-    region: regionVal,
-    start: startVal,
-    end: endVal,
-    area: Number(areaVal),
-    yieldTon: Number(yieldVal || 0),
-    price: Number(document.getElementById('f_price').value || 0),
-    specialty: document.getElementById('f_specialty').checked,
-    status: document.getElementById('f_status').value
-  };
-
-  if(!canManage(record.region)){
-    toast('Bạn không có quyền phụ trách địa bàn ấp này', 'warn');
-    return;
-  }
-
-  setBtnLoading('btnSaveSeason', true);
-  try{
-    if(id){
-      const idx = seasons.findIndex(x => x.id === Number(id));
-      seasons[idx] = { ...seasons[idx], ...record };
-    }else{
-      const newId = seasons.length ? Math.max(...seasons.map(s => s.id)) + 1 : 1;
-      seasons.push({ id: newId, ...record });
-    }
-    await saveSeasons();
-    await logActivity((id ? 'Cập nhật mùa vụ: ' : 'Thêm mùa vụ mới: ') + record.name + ' — bởi ' + currentUser.user);
-    closeForm();
-    renderAll();
-    toast('Đã lưu thông tin mùa vụ', 'ok');
-  }catch(e){
-    console.error(e);
-    toast('Lỗi khi lưu mùa vụ: ' + e.message, 'warn');
-  }finally{
-    setBtnLoading('btnSaveSeason', false);
-  }
-}
-
-async function deleteSeason(id){
-  const s = seasons.find(x => x.id === id);
-  if(!canManage(s?.region)){
-    toast('Bạn không có quyền xóa mùa vụ này', 'warn');
-    return;
-  }
-
-  // ĐÃ SỬA: Kiểm tra dữ liệu liên kết (kiểm định chất lượng & đầu ra) để tránh mồ côi dữ liệu
-  const depTests = qualityTests.filter(q => q.seasonId === id).length;
-  const depOutputs = outputs.filter(o => o.seasonId === id).length;
-
-  let msg = `Bạn có chắc muốn xóa mùa vụ "${s?.name}"?`;
-  if(depTests > 0 || depOutputs > 0){
-    msg += `\nLưu ý: Mùa vụ này đang có ${depTests} lần kiểm định và ${depOutputs} giao dịch đầu ra liên kết. Khi xóa, các dữ liệu này sẽ được hủy gán mùa vụ để bảo toàn báo cáo.`;
-  }
-
-  const ok = await showConfirmDialog('Xác nhận xóa mùa vụ', msg, 'Xóa mùa vụ', true);
-  if(!ok) return;
-
-  seasons = seasons.filter(x => x.id !== id);
-  qualityTests.forEach(q => { if(q.seasonId === id) q.seasonId = null; });
-  outputs.forEach(o => { if(o.seasonId === id) o.seasonId = null; });
-
-  await saveSeasons();
-  await saveQualityTests();
-  await saveOutputs();
-  await logActivity('Xóa mùa vụ: ' + (s ? s.name : '') + ' — bởi ' + currentUser.user);
-  renderAll();
-  toast('Đã xóa mùa vụ và cập nhật các liên kết', 'warn');
-}
-
-/* ============ Trợ lý AI nông nghiệp (Cloud Function + Động cơ phân tích cục bộ) ============ */
-async function apiAskAI(prompt){
-  const callAskAI = httpsCallable(functions, 'askAI');
-  const result = await callAskAI({ prompt });
-  const text = result?.data?.text;
-  if(!text) throw new Error('Không có phản hồi từ máy chủ AI');
-  return text;
-}
-
-// Động cơ phân tích dữ liệu cục bộ chạy 100% khi Cloud Function chưa triển khai hoặc mất mạng
-function askLocalAI(question){
-  const q = question.toLowerCase();
-
-  // 1. Phân tích năng suất mùa vụ
-  if(q.includes('năng suất thấp') || q.includes('kém nhất') || q.includes('sản lượng thấp')){
-    if(seasons.length === 0) return 'Hiện chưa có dữ liệu mùa vụ nào trong hệ thống để phân tích năng suất.';
-    const validSeasons = seasons.filter(s => Number(s.area || 0) > 0);
-    const sortedByYield = [...validSeasons].sort((a, b) => seasonYieldPerHa(a) - seasonYieldPerHa(b));
-    const lowest = sortedByYield[0];
-    const lowYieldVal = seasonYieldPerHa(lowest).toFixed(2);
-    return `📊 **Phân tích năng suất:**\n- Mùa vụ có năng suất thấp nhất hiện nay là **${lowest.name}** (${lowest.crop} tại ${lowest.region}), đạt **${lowYieldVal} tấn/ha** (sản lượng ${lowest.yieldTon} tấn trên diện tích ${lowest.area} ha).\n- **Đề xuất khắc phục:** Hộ trồng nên kiểm tra lại hệ thống tưới tiêu ven sông, bổ sung phân hữu cơ vi sinh và đối chiếu lịch bón phân cân đối giữa đạm, lân, kali theo khuyến cáo của Chi cục Trồng trọt & BVTV.`;
-  }
-
-  // 2. Phân tích kiểm định an toàn thực phẩm
-  if(q.includes('kiểm định') || q.includes('không đạt') || q.includes('chất lượng') || q.includes('dư lượng')){
-    const failed = qualityTests.filter(t => t.result === 'fail');
-    if(failed.length === 0){
-      return `✅ **Báo cáo an toàn thực phẩm:**\nHiện tại **100% các lần kiểm định đã có kết quả đều đạt chuẩn an toàn** (VietGAP/Siêu thị/Xuất khẩu). Toàn xã ghi nhận ${qualityTests.length} lượt kiểm nghiệm không phát hiện dư lượng hóa chất vượt ngưỡng cho phép.`;
-    }
-    const details = failed.map(f => `- **${seasonLabel(f.seasonId)}**: Chỉ tiêu *${f.metric}* đo được ${f.value} ${f.unit || ''} (vượt ngưỡng cho phép ${f.threshold} ${f.unit || ''}). Tiêu chuẩn: ${f.standard}.`).join('\n');
-    return `⚠️ **Cảnh báo kiểm định chất lượng:**\nHiện có **${failed.length} chỉ tiêu kiểm định chưa đạt chuẩn**:\n${details}\n\n💡 **Khuyến nghị kỹ thuật:**\n1. Kéo dài thời gian cách ly trước thu hoạch (tối thiểu 14 ngày đối với thuốc BVTV sinh học).\n2. Giảm liều lượng phân đạm nitrat, thay thế bằng phân chuồng hoai mục ủ nấm Trichoderma.\n3. Lấy mẫu xét nghiệm lại trước khi đóng gói xuất xưởng.`;
-  }
-
-  // 3. Tư vấn đầu ra cho cây trồng (chôm chôm, rau, sơ ri...)
-  if(q.includes('đầu ra') || q.includes('chôm chôm') || q.includes('tiêu thụ') || q.includes('thương lái')){
-    const openProcs = procurements.filter(p => p.status === 'open');
-    const matched = openProcs.filter(p => p.crop.toLowerCase().includes('chôm chôm') || p.crop.toLowerCase().includes('trái cây') || p.crop.toLowerCase().includes('rau'));
-    let text = `🤝 **Gợi ý kết nối đầu ra:**\n`;
-    if(matched.length > 0){
-      text += `Hiện đang có **${matched.length} tin thu mua phù hợp** trên hệ thống:\n` +
-        matched.map(m => `- Tin: **${m.title}** (${m.buyer}) — Cần ${m.quantity} ${m.unitLabel || 'tấn'} ${m.crop} tại ${m.ap}. Giá chào mua: ${m.priceOffer ? money(m.priceOffer) + ' đ/kg' : 'Thỏa thuận'}.`).join('\n');
-    }else{
-      text += `Hiện các tin thu mua chuyên biệt đang đủ nguồn. Tuy nhiên qua thống kê kênh tiêu thụ xã, kênh **Siêu thị trong nước** và **Chợ đầu mối Hóc Môn/Thủ Đức** đang giữ giá bình ổn cao nhất cho nông sản Bình Mỹ (khoảng 35.000 - 55.000 đ/kg đối với trái cây đạt chuẩn VietGAP).`;
-    }
-    return text;
-  }
-
-  // 4. Giá trị kinh tế toàn xã
-  if(q.includes('giá trị') || q.includes('kinh tế') || q.includes('tổng doanh thu') || q.includes('ước tính')){
-    const totalRev = seasons.reduce((a, s) => a + seasonRevenue(s), 0);
-    const totalYield = seasons.reduce((a, s) => a + Number(s.yieldTon || 0), 0);
-    const totalArea = seasons.reduce((a, s) => a + Number(s.area || 0), 0);
-    const outRev = outputs.filter(o => o.status === 'done').reduce((a, o) => a + outputRevenue(o), 0);
-
-    return `💰 **Ước tính kinh tế nông nghiệp xã Bình Mỹ:**\n- **Tổng giá trị thu hoạch ước tính:** **${money(totalRev)} đ** (~${(totalRev / 1000000000).toFixed(2)} tỷ đồng).\n- **Tổng sản lượng:** ${money(totalYield)} tấn trên ${money(totalArea)} ha đất canh tác.\n- **Doanh thu đã thực hiện qua hợp đồng:** ${money(outRev)} đ.\n- **Giá trị trung bình mỗi hecta:** ${totalArea > 0 ? money(Math.round(totalRev / totalArea)) : 0} đ/ha.`;
-  }
-
-  // 5. Câu trả lời tổng hợp mặc định
-  return `🌾 **Trợ lý Nông nghiệp Bình Mỹ:**\nHệ thống hiện đang quản lý **${seasons.length} mùa vụ**, **${households.length} hộ trồng**, **${procurements.length} tin thu mua** và **${products.length} mặt hàng chào bán**.\n\nBạn có thể hỏi tôi chi tiết về:\n- Năng suất và diện tích từng ấp (Ấp Bốn Phú, Ấp 6, Ấp 7...)\n- Chỉ tiêu kiểm định chất lượng và dư lượng thuốc BVTV\n- Kết nối đối tác thu mua và giá nông sản hôm nay.`;
-}
-
-function renderChat(){
-  const log = document.getElementById('chatLog');
-  if(!log) return;
-  if(chatHistory.length === 0){
-    log.innerHTML = `
+B\u1EA1n c\xF3 th\u1EC3 h\u1ECFi t\xF4i chi ti\u1EBFt v\u1EC1:
+- N\u0103ng su\u1EA5t v\xE0 di\u1EC7n t\xEDch t\u1EEBng \u1EA5p (\u1EA4p B\u1ED1n Ph\xFA, \u1EA4p 6, \u1EA4p 7...)
+- Ch\u1EC9 ti\xEAu ki\u1EC3m \u0111\u1ECBnh ch\u1EA5t l\u01B0\u1EE3ng v\xE0 d\u01B0 l\u01B0\u1EE3ng thu\u1ED1c BVTV
+- K\u1EBFt n\u1ED1i \u0111\u1ED1i t\xE1c thu mua v\xE0 gi\xE1 n\xF4ng s\u1EA3n h\xF4m nay.`}function Ft(){let t=document.getElementById("chatLog");if(t){if(Q.length===0){t.innerHTML=`
       <div class="bubble bubble-ai">
-        Xin chào! Tôi là Trợ lý AI nông nghiệp xã Bình Mỹ. Tôi có thể hỗ trợ bạn phân tích năng suất mùa vụ, cảnh báo chỉ tiêu kiểm định chất lượng, tìm đối tác thu mua và tính toán giá trị kinh tế. Hãy chọn gợi ý bên dưới hoặc nhập câu hỏi của bạn!
-      </div>`;
-    return;
-  }
+        Xin ch\xE0o! T\xF4i l\xE0 Tr\u1EE3 l\xFD AI n\xF4ng nghi\u1EC7p x\xE3 B\xECnh M\u1EF9. T\xF4i c\xF3 th\u1EC3 h\u1ED7 tr\u1EE3 b\u1EA1n ph\xE2n t\xEDch n\u0103ng su\u1EA5t m\xF9a v\u1EE5, c\u1EA3nh b\xE1o ch\u1EC9 ti\xEAu ki\u1EC3m \u0111\u1ECBnh ch\u1EA5t l\u01B0\u1EE3ng, t\xECm \u0111\u1ED1i t\xE1c thu mua v\xE0 t\xEDnh to\xE1n gi\xE1 tr\u1ECB kinh t\u1EBF. H\xE3y ch\u1ECDn g\u1EE3i \xFD b\xEAn d\u01B0\u1EDBi ho\u1EB7c nh\u1EADp c\xE2u h\u1ECFi c\u1EE7a b\u1EA1n!
+      </div>`;return}t.innerHTML=Q.map(e=>{let n="bubble "+(e.role==="user"?"bubble-user":"bubble-ai")+(e.loading?" loading":""),a=e.loading?'<span class="typing-dots"><span></span><span></span><span></span></span>':r(e.text).replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>");return`<div class="${n}">${a}</div>`}).join(""),t.scrollTop=t.scrollHeight}}function Ho(){let t=document.getElementById("aiSuggestions");t&&(t.innerHTML=Pn.map(e=>`<button type="button" class="ai-chip" onclick="askAI('${e.replace(/'/g,"\\'")}')">${r(e)}</button>`).join(""))}function $e(){Q=[],Ft(),m("\u0110\xE3 l\xE0m m\u1EDBi cu\u1ED9c h\u1ED9i tho\u1EA1i v\u1EDBi tr\u1EE3 l\xFD AI","ok")}async function Do(t){let e=document.getElementById("aiQuestion"),n=typeof t=="string"?t:e?.value.trim();if(!n){m("Vui l\xF2ng nh\u1EADp c\xE2u h\u1ECFi tr\u01B0\u1EDBc khi g\u1EEDi","warn");return}e&&(e.value=""),Q.push({role:"user",text:n}),Q.push({role:"ai",text:"\u0110ang ph\xE2n t\xEDch s\u1ED1 li\u1EC7u th\u1EF1c t\u1EBF...",loading:!0}),Ft();let a=document.getElementById("askAiBtn");a&&(a.disabled=!0);try{let i=v.map(d=>`- ${d.name} (M\xE3: ${d.productCode||d.id}) | H\u1ED9 tr\u1ED3ng: ${d.sellerName||"\u2014"} | \u1EA4p: ${d.ap||"B\xECnh M\u1EF9"} | Gi\xE1: ${d.price||0}\u0111/${d.unitLabel||"kg"} | T\xECnh tr\u1EA1ng: ${d.status==="available"?"C\xF2n h\xE0ng":"H\u1EBFt h\xE0ng"} | Ch\u1EE9ng nh\u1EADn: ${d.certification||"Ch\u01B0a ki\u1EC3m \u0111\u1ECBnh"}`).join(`
+`),o=y.map(d=>`- ${d.name} | C\xE2y: ${d.crop} | \u1EA4p: ${d.region} | Di\u1EC7n t\xEDch: ${d.area}ha | S\u1EA3n l\u01B0\u1EE3ng: ${d.yieldTon} t\u1EA5n | Gi\xE1 TT: ${d.price||0}\u0111 | Doanh thu \u01B0\u1EDBc t\xEDnh: ${W(d)}\u0111`).join(`
+`),c=I.map(d=>`- M\xF9a v\u1EE5: ${K(d.seasonId)} | Ch\u1EC9 ti\xEAu: ${d.metric} | Gi\xE1 tr\u1ECB: ${d.value} (Ng\u01B0\u1EE1ng: ${d.threshold}) | K\u1EBFt qu\u1EA3: ${d.result}`).join(`
+`),s=`B\u1EA1n l\xE0 Tr\u1EE3 l\xFD N\xF4ng nghi\u1EC7p th\xF4ng minh x\xE3 B\xECnh M\u1EF9, TP.HCM.
+D\u1EEF li\u1EC7u s\u1EA3n ph\u1EA9m n\xF4ng s\u1EA3n \u0111ang b\xE1n & m\xE3 QR truy xu\u1EA5t:
+${i}
 
-  log.innerHTML = chatHistory.map(m => {
-    const cls = 'bubble ' + (m.role === 'user' ? 'bubble-user' : 'bubble-ai') + (m.loading ? ' loading' : '');
-    const content = m.loading
-      ? '<span class="typing-dots"><span></span><span></span><span></span></span>'
-      : esc(m.text).replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-    return `<div class="${cls}">${content}</div>`;
-  }).join('');
-  log.scrollTop = log.scrollHeight;
-}
+D\u1EEF li\u1EC7u m\xF9a v\u1EE5 hi\u1EC7n t\u1EA1i:
+${o}
 
-function renderAiSuggestions(){
-  const el = document.getElementById('aiSuggestions');
-  if(!el) return;
-  el.innerHTML = AI_SUGGESTIONS.map(q => `<button type="button" class="ai-chip" onclick="askAI('${q.replace(/'/g, "\\'")}')">${esc(q)}</button>`).join('');
-}
+D\u1EEF li\u1EC7u ki\u1EC3m \u0111\u1ECBnh ch\u1EA5t l\u01B0\u1EE3ng:
+${c}
 
-function clearChatHistory(){
-  chatHistory = [];
-  renderChat();
-  toast('Đã làm mới cuộc hội thoại với trợ lý AI', 'ok');
-}
-
-async function askAI(preset){
-  const input = document.getElementById('aiQuestion');
-  const question = (typeof preset === 'string') ? preset : input?.value.trim();
-  if(!question){
-    toast('Vui lòng nhập câu hỏi trước khi gửi', 'warn');
-    return;
-  }
-  if(input) input.value = '';
-
-  chatHistory.push({ role: 'user', text: question });
-  chatHistory.push({ role: 'ai', text: 'Đang phân tích số liệu thực tế...', loading: true });
-  renderChat();
-
-  const btn = document.getElementById('askAiBtn');
-  if(btn) btn.disabled = true;
-
-  try{
-    // Tạo bản tóm tắt ngữ cảnh cho Cloud Function & AI
-    const productSummary = products.map(p =>
-      `- ${p.name} (Mã: ${p.productCode || p.id}) | Hộ trồng: ${p.sellerName || '—'} | Ấp: ${p.ap || 'Bình Mỹ'} | Giá: ${p.price || 0}đ/${p.unitLabel || 'kg'} | Tình trạng: ${p.status === 'available' ? 'Còn hàng' : 'Hết hàng'} | Chứng nhận: ${p.certification || 'Chưa kiểm định'}`
-    ).join('\n');
-
-    const dataSummary = seasons.map(s =>
-      `- ${s.name} | Cây: ${s.crop} | Ấp: ${s.region} | Diện tích: ${s.area}ha | Sản lượng: ${s.yieldTon} tấn | Giá TT: ${s.price || 0}đ | Doanh thu ước tính: ${seasonRevenue(s)}đ`
-    ).join('\n');
-
-    const qualitySummary = qualityTests.map(q =>
-      `- Mùa vụ: ${seasonLabel(q.seasonId)} | Chỉ tiêu: ${q.metric} | Giá trị: ${q.value} (Ngưỡng: ${q.threshold}) | Kết quả: ${q.result}`
-    ).join('\n');
-
-    const prompt = `Bạn là Trợ lý Nông nghiệp thông minh xã Bình Mỹ, TP.HCM.
-Dữ liệu sản phẩm nông sản đang bán & mã QR truy xuất:
-${productSummary}
-
-Dữ liệu mùa vụ hiện tại:
-${dataSummary}
-
-Dữ liệu kiểm định chất lượng:
-${qualitySummary}
-
-Câu hỏi: "${question}"
-Hãy trả lời ngắn gọn, chân thành, thực tế, dễ hiểu đối với bà con nông dân và người tiêu dùng.`;
-
-    let text;
-    try{
-      text = await apiAskAI(prompt);
-    }catch(netErr){
-      console.warn('Không thể gọi Cloud Function, kích hoạt động cơ phân tích cục bộ:', netErr);
-      text = askLocalAI(question);
-    }
-    chatHistory[chatHistory.length - 1] = { role: 'ai', text };
-  }catch(e){
-    console.error('Lỗi trợ lý AI:', e);
-    chatHistory[chatHistory.length - 1] = { role: 'ai', text: 'Có lỗi trong quá trình xử lý: ' + e.message };
-  }finally{
-    if(btn) btn.disabled = false;
-    renderChat();
-  }
-}
-
-/* ============ Điều hướng SPA & Hash Router Đa Nền Tảng ============ */
-const VIEW_IDS = ['trang-chu', 'tin-thu-mua', 'kiem-dinh', 'tro-ly-ai', 'quan-ly'];
-
-function isMobileViewport(){
-  return window.innerWidth < 768;
-}
-
-function showView(id){
-  // Nếu đang xem trên desktop màn hình lớn mà hash là trang chủ mobile -> tự động sang sản phẩm
-  if(!isMobileViewport() && id === 'trang-chu'){
-    id = 'tin-thu-mua';
-  }
-  if(!VIEW_IDS.includes(id)){
-    id = isMobileViewport() ? 'trang-chu' : 'tin-thu-mua';
-  }
-  if(id === 'quan-ly' && !isAdmin){
-    id = isMobileViewport() ? 'trang-chu' : 'tin-thu-mua';
-    if(location.hash.slice(1) !== id){
-      location.hash = id;
-      return;
-    }
-  }
-
-  VIEW_IDS.forEach(vid => {
-    const el = document.getElementById(vid);
-    if(el) el.classList.toggle('active-view', vid === id);
-  });
-
-  // Đồng bộ Desktop Quick Navigation Bar (#quickNavBar)
-  syncQuickNavActive(id);
-
-  // Đồng bộ Mobile Bottom Navigation Bar (#mobileBottomNav)
-  document.querySelectorAll('.mobile-bottom-nav .m-nav-item').forEach(btn => {
-    const navTarget = btn.getAttribute('data-mnav');
-    if(navTarget){
-      btn.classList.toggle('active', navTarget === id);
-    }
-  });
-
-  window.scrollTo(0, 0);
-}
-
-function syncQuickNavActive(id){
-  const nav = document.getElementById('quickNavBar');
-  if(!nav) return;
-  const currentSubtab = (id === 'tin-thu-mua')
-    ? (document.querySelector('#dauRaTabs2 button.active')?.getAttribute('data-subtab') || 'dr2-products')
-    : null;
-
-  nav.querySelectorAll('.quick-nav-item').forEach(btn => {
-    const target = btn.getAttribute('data-view');
-    if(!target) return;
-    if(id === 'tin-thu-mua'){
-      btn.classList.toggle('active', target === currentSubtab);
-    } else {
-      btn.classList.toggle('active', target === id);
-    }
-  });
-}
-
-function updateNavAdminVisibility(){
-  const quickAdmin = document.getElementById('quickNavAdmin');
-  if(quickAdmin){
-    quickAdmin.style.display = isAdmin ? 'inline-flex' : 'none';
-  }
-  const mLinkAdmin = document.getElementById('mLinkAdmin');
-  if(mLinkAdmin){
-    mLinkAdmin.style.display = isAdmin ? 'flex' : 'none';
-  }
-  const mLinkLogin = document.getElementById('mLinkLogin');
-  const mLinkLogout = document.getElementById('mLinkLogout');
-  const mLoggedUser = document.getElementById('mLoggedUser');
-  if(currentUser || currentPersonUser){
-    if(mLinkLogin) mLinkLogin.style.display = 'none';
-    if(mLinkLogout) mLinkLogout.style.display = 'flex';
-    if(mLoggedUser){
-      const uName = currentUser ? currentUser.user : (currentPersonUser.displayName || currentPersonUser.username);
-      mLoggedUser.textContent = `Đang đăng nhập: ${uName}`;
-    }
-  } else {
-    if(mLinkLogin) mLinkLogin.style.display = 'flex';
-    if(mLinkLogout) mLinkLogout.style.display = 'none';
-    if(mLoggedUser) mLoggedUser.textContent = '';
-  }
-}
-
-function switchMobileNav(viewId){
-  closeMobileMoreSheet();
-  if(viewId === 'tin-thu-mua'){
-    // Đảm bảo tab "Sản phẩm đang bán" được chọn khi bấm từ mobile bottom nav
-    const tabBtn = document.querySelector('#dauRaTabs2 button[data-subtab="dr2-products"]');
-    if(tabBtn) tabBtn.click();
-  }
-  location.hash = viewId;
-  showView(viewId);
-}
-
-function openMobileMoreSheet(){
-  const overlay = document.getElementById('moreMenuOverlay');
-  if(overlay) overlay.classList.add('open');
-}
-
-function closeMobileMoreSheet(){
-  const overlay = document.getElementById('moreMenuOverlay');
-  if(overlay) overlay.classList.remove('open');
-}
-
-function switchToAdmin(){
-  closeMobileMoreSheet();
-  if(!isAdmin){
-    openPersonAuth();
-    toast('Vui lòng đăng nhập tài khoản Cán bộ để vào trang quản lý', 'warn');
-    return;
-  }
-  location.hash = 'quan-ly';
-  showView('quan-ly');
-}
-
-function initRouter(){
-  const applyFromHash = () => {
-    const hash = location.hash || '';
-    if(hash.startsWith('#san-pham=')){
-      checkDeepLinkProduct();
-      showView(isMobileViewport() ? 'trang-chu' : 'tin-thu-mua');
-      return;
-    }
-    const defaultView = isMobileViewport() ? 'trang-chu' : 'tin-thu-mua';
-    showView((hash ? hash.slice(1) : defaultView));
-  };
-  window.addEventListener('hashchange', applyFromHash);
-  applyFromHash();
-}
-
-function restoreAdminDeepLinkIfNeeded(){
-  if(isAdmin && initialHash === 'quan-ly' && location.hash.slice(1) !== 'quan-ly'){
-    location.hash = 'quan-ly';
-  }
-}
-
-function initSubtabs(navId, subviewPrefix){
-  const nav = document.getElementById(navId);
-  if(!nav) return;
-  nav.addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-subtab]');
-    if(!btn) return;
-    const key = btn.getAttribute('data-subtab');
-    nav.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
-    nav.parentElement.querySelectorAll('.subview').forEach(sv => {
-      sv.classList.toggle('active-subview', sv.id === subviewPrefix + key);
-    });
-    if(navId === 'dauRaTabs2'){
-      syncQuickNavActive('tin-thu-mua');
-    }
-  });
-}
-
-/* ============ Khởi động ứng dụng ============ */
-(async function init(){
-  initRouter();
-  initSubtabs('quanLyTabs', 'subview-');
-  initSubtabs('dauRaTabs2', 'subview-');
-
-  try{
-    await loadData();
-    renderAll();
-    updateNavAdminVisibility();
-    renderAiSuggestions();
-    renderChat();
-    checkDeepLinkProduct();
-  }catch(e){
-    console.error('Lỗi khởi tạo dữ liệu:', e);
-    toast('Có lỗi khi tải dữ liệu, hệ thống đang dùng bộ nhớ đệm', 'warn');
-  }
-
-  const loader = document.getElementById('appLoader');
-  if(loader) loader.classList.add('hide');
-
-  tickClock();
-  setInterval(tickClock, 1000);
-
-  // Lắng nghe sự kiện tìm kiếm và bộ lọc
-  document.getElementById('searchSeason')?.addEventListener('input', debounce(renderTable, 250));
-  document.getElementById('filterStatus')?.addEventListener('change', renderTable);
-  document.getElementById('filterSeasonCrop')?.addEventListener('change', renderTable);
-  document.getElementById('filterSeasonAp')?.addEventListener('change', renderTable);
-
-  document.getElementById('searchHh')?.addEventListener('input', debounce(renderHouseholds, 250));
-  document.getElementById('filterAp')?.addEventListener('change', renderHouseholds);
-
-  document.getElementById('searchQuality')?.addEventListener('input', debounce(renderQuality, 250));
-  document.getElementById('filterQualityResult')?.addEventListener('change', renderQuality);
-  document.getElementById('filterQualityStandard')?.addEventListener('change', renderQuality);
-
-  document.getElementById('searchOutput')?.addEventListener('input', debounce(renderOutputs, 250));
-  document.getElementById('filterOutputStatus')?.addEventListener('change', renderOutputs);
-  document.getElementById('filterOutputChannel')?.addEventListener('change', renderOutputs);
-
-  document.getElementById('searchProc')?.addEventListener('input', debounce(renderProcurements, 250));
-  document.getElementById('filterProcStatus')?.addEventListener('change', renderProcurements);
-  document.getElementById('filterProcCrop')?.addEventListener('change', renderProcurements);
-
-  document.getElementById('searchProduct')?.addEventListener('input', debounce(renderProducts, 250));
-  document.getElementById('filterProductName')?.addEventListener('change', renderProducts);
-  document.getElementById('filterProductStatus')?.addEventListener('change', renderProducts);
-  document.getElementById('filterProductQuality')?.addEventListener('change', renderProducts);
-  document.getElementById('filterProductCert')?.addEventListener('change', renderProducts);
-
-  // Lắng nghe ô tìm kiếm sản phẩm trên Mobile
-  const mSearch = document.getElementById('mobileSearchInput');
-  if(mSearch){
-    mSearch.addEventListener('input', debounce(() => {
-      const clr = document.getElementById('mobileSearchClear');
-      if(clr) clr.style.display = mSearch.value.trim() ? 'flex' : 'none';
-      renderProducts();
-    }, 250));
-  }
-
-  // Tự động điều chỉnh view nếu người dùng xoay màn hình hoặc co giãn cửa sổ trình duyệt
-  window.addEventListener('resize', debounce(() => {
-    const cur = (location.hash || '').slice(1);
-    if(!isMobileViewport() && cur === 'trang-chu'){
-      location.hash = 'tin-thu-mua';
-      showView('tin-thu-mua');
-    }
-  }, 250));
-
-  // Sắp xếp cột bảng Mùa vụ
-  document.addEventListener('click', (e) => {
-    const th = e.target.closest('#subview-ql-muavu th.sortable');
-    if(!th) return;
-    const key = th.getAttribute('data-sort');
-    if(sortKey === key){ sortDir = -sortDir; } else { sortKey = key; sortDir = 1; }
-    renderTable();
-  });
-
-  // Sắp xếp cột bảng Hộ trồng
-  document.addEventListener('click', (e) => {
-    const th = e.target.closest('#hhTable th.sortable');
-    if(!th) return;
-    const key = th.getAttribute('data-sort');
-    if(hhSortKey === key){ hhSortDir = -hhSortDir; } else { hhSortKey = key; hhSortDir = 1; }
-    renderHouseholds();
-  });
-
-  setupRealtime();
-})();
-
-/* ============ Xuất các hàm ra phạm vi toàn cục (Window) ============ */
-Object.assign(window, {
-  askAI, clearChatHistory, clearAiChat: clearChatHistory, closeConfirmModal, closeConfirmDialog: closeConfirmModal,
-  closeAccountForm, closeAccountsModal, closeApplyForm, closeAuthMenuThen, closeBuyForm, closeForm, closeHhForm,
-  closeOutputForm, closePersonAuth, closeProcForm, closeProcDetail, closeProductForm, closePwForm, closeQualityForm, closeResetOverlay,
-  closeTestDataImportModal,
-  deleteAccount, deleteHousehold, deleteOutput, deleteProcurement, deleteProduct, deleteQualityTest, deleteSeason,
-  doPersonLogin, doPersonRegister, exportCsv, logout, personLogout,
-  downloadSampleTestJson, importTestData,
-  openAccountForm, openAccountsModal, openApplyForm, openBuyForm, openForm, openHhForm,
-  openOutputForm, openPersonAuth, openProcForm, openProcDetail, openProductForm, openPwForm, openQualityForm, openResetOverlay,
-  openTestDataImportModal, readTestDataImportFile,
-  saveAccountForm, saveForm, saveHhForm, saveOutputForm, saveProcForm, saveProductForm, savePwForm, saveQualityForm,
-  sendPasswordResetRequest, submitApplication, submitBuyRequest, switchPersonAuth,
-  toggleAccountApField, toggleApplicants, toggleAuthMenu, toggleBuyers, toggleProcStatus, toggleProductStatus, togglePuApField,
-  quickAddSeason, quickAddQuality, quickAddProc, quickOpenAI, quickFilterLowYield,
-
-  // Các tính năng QR, chi tiết sản phẩm, điều hướng & hướng dẫn mới
-  openQrScanner, closeQrScanner, switchCameraFacing, lookupManualCode, openManualLookup,
-  showProductDetail, showProductDetailByCode, closeProductDetail,
-  openProductQrModal, closeProductQrModal, downloadProductQr, printProductQr,
-  openHelpModal, closeHelpModal,
-  switchToDauRaProducts, switchToDauRaDemand, switchToQuality, switchToAI,
-  handleOpenProductForm,
-
-  // Xử lý xem ảnh lớn lightbox và ảnh form sản phẩm
-  openProductLightbox, closeImageLightbox, switchDetailImage,
-  previewProductFormImage, clearProductFormImage, handleProductFormImgError,
-  clearAllProductFilters,
-
-  // Các hàm điều hướng và tương tác Mobile mới
-  switchMobileNav, openMobileMoreSheet, closeMobileMoreSheet, clearMobileSearch,
-  switchToAdmin, renderMobileHomeStats
-});
+C\xE2u h\u1ECFi: "${n}"
+H\xE3y tr\u1EA3 l\u1EDDi ng\u1EAFn g\u1ECDn, ch\xE2n th\xE0nh, th\u1EF1c t\u1EBF, d\u1EC5 hi\u1EC3u \u0111\u1ED1i v\u1EDBi b\xE0 con n\xF4ng d\xE2n v\xE0 ng\u01B0\u1EDDi ti\xEAu d\xF9ng.`,u;try{u=await Mo(s)}catch(d){console.warn("Kh\xF4ng th\u1EC3 g\u1ECDi Cloud Function, k\xEDch ho\u1EA1t \u0111\u1ED9ng c\u01A1 ph\xE2n t\xEDch c\u1EE5c b\u1ED9:",d),u=No(n)}Q[Q.length-1]={role:"ai",text:u}}catch(i){console.error("L\u1ED7i tr\u1EE3 l\xFD AI:",i),Q[Q.length-1]={role:"ai",text:"C\xF3 l\u1ED7i trong qu\xE1 tr\xECnh x\u1EED l\xFD: "+i.message}}finally{a&&(a.disabled=!1),Ft()}}var _e=["trang-chu","tin-thu-mua","kiem-dinh","tro-ly-ai","quan-ly"];function dt(){return window.innerWidth<768}function X(t){if(!dt()&&t==="trang-chu"&&(t="tin-thu-mua"),_e.includes(t)||(t=dt()?"trang-chu":"tin-thu-mua"),t==="quan-ly"&&!S&&(t=dt()?"trang-chu":"tin-thu-mua",location.hash.slice(1)!==t)){location.hash=t;return}_e.forEach(e=>{let n=document.getElementById(e);n&&n.classList.toggle("active-view",e===t)}),gn(t),document.querySelectorAll(".mobile-bottom-nav .m-nav-item").forEach(e=>{let n=e.getAttribute("data-mnav");n&&e.classList.toggle("active",n===t)}),window.scrollTo(0,0)}function gn(t){let e=document.getElementById("quickNavBar");if(!e)return;let n=t==="tin-thu-mua"?document.querySelector("#dauRaTabs2 button.active")?.getAttribute("data-subtab")||"dr2-products":null;e.querySelectorAll(".quick-nav-item").forEach(a=>{let i=a.getAttribute("data-view");i&&(t==="tin-thu-mua"?a.classList.toggle("active",i===n):a.classList.toggle("active",i===t))})}function yn(){let t=document.getElementById("quickNavAdmin");t&&(t.style.display=S?"inline-flex":"none");let e=document.getElementById("mLinkAdmin");e&&(e.style.display=S?"flex":"none");let n=document.getElementById("mLinkLogin"),a=document.getElementById("mLinkLogout"),i=document.getElementById("mLoggedUser");if(h||p){if(n&&(n.style.display="none"),a&&(a.style.display="flex"),i){let o=h?h.user:p.displayName||p.username;i.textContent=`\u0110ang \u0111\u0103ng nh\u1EADp: ${o}`}}else n&&(n.style.display="flex"),a&&(a.style.display="none"),i&&(i.textContent="")}function Oo(t){if(ye(),t==="tin-thu-mua"){let e=document.querySelector('#dauRaTabs2 button[data-subtab="dr2-products"]');e&&e.click()}location.hash=t,X(t)}function Fo(){let t=document.getElementById("moreMenuOverlay");t&&t.classList.add("open")}function ye(){let t=document.getElementById("moreMenuOverlay");t&&t.classList.remove("open")}function Vo(){if(ye(),!S){Ut(),m("Vui l\xF2ng \u0111\u0103ng nh\u1EADp t\xE0i kho\u1EA3n C\xE1n b\u1ED9 \u0111\u1EC3 v\xE0o trang qu\u1EA3n l\xFD","warn");return}location.hash="quan-ly",X("quan-ly")}function Ro(){let t=()=>{let e=location.hash||"";if(e.startsWith("#san-pham=")){tn(),X(dt()?"trang-chu":"tin-thu-mua");return}let n=dt()?"trang-chu":"tin-thu-mua";X(e?e.slice(1):n)};window.addEventListener("hashchange",t),t()}function Qo(){S&&An==="quan-ly"&&location.hash.slice(1)!=="quan-ly"&&(location.hash="quan-ly")}function Le(t,e){let n=document.getElementById(t);n&&n.addEventListener("click",a=>{let i=a.target.closest("button[data-subtab]");if(!i)return;let o=i.getAttribute("data-subtab");n.querySelectorAll("button").forEach(c=>c.classList.toggle("active",c===i)),n.parentElement.querySelectorAll(".subview").forEach(c=>{c.classList.toggle("active-subview",c.id===e+o)}),t==="dauRaTabs2"&&gn("tin-thu-mua")})}(async function(){Ro(),Le("quanLyTabs","subview-"),Le("dauRaTabs2","subview-");try{await Vn(),B(),yn(),Ho(),Ft(),tn()}catch(a){console.error("L\u1ED7i kh\u1EDFi t\u1EA1o d\u1EEF li\u1EC7u:",a),m("C\xF3 l\u1ED7i khi t\u1EA3i d\u1EEF li\u1EC7u, h\u1EC7 th\u1ED1ng \u0111ang d\xF9ng b\u1ED9 nh\u1EDB \u0111\u1EC7m","warn")}let e=document.getElementById("appLoader");e&&e.classList.add("hide"),we(),setInterval(we,1e3),document.getElementById("searchSeason")?.addEventListener("input",z(nt,250)),document.getElementById("filterStatus")?.addEventListener("change",nt),document.getElementById("filterSeasonCrop")?.addEventListener("change",nt),document.getElementById("filterSeasonAp")?.addEventListener("change",nt),document.getElementById("searchHh")?.addEventListener("input",z(Pt,250)),document.getElementById("filterAp")?.addEventListener("change",Pt),document.getElementById("searchQuality")?.addEventListener("input",z(St,250)),document.getElementById("filterQualityResult")?.addEventListener("change",St),document.getElementById("filterQualityStandard")?.addEventListener("change",St),document.getElementById("searchOutput")?.addEventListener("input",z(Tt,250)),document.getElementById("filterOutputStatus")?.addEventListener("change",Tt),document.getElementById("filterOutputChannel")?.addEventListener("change",Tt),document.getElementById("searchProc")?.addEventListener("input",z(qt,250)),document.getElementById("filterProcStatus")?.addEventListener("change",qt),document.getElementById("filterProcCrop")?.addEventListener("change",qt),document.getElementById("searchProduct")?.addEventListener("input",z(F,250)),document.getElementById("filterProductName")?.addEventListener("change",F),document.getElementById("filterProductStatus")?.addEventListener("change",F),document.getElementById("filterProductQuality")?.addEventListener("change",F),document.getElementById("filterProductCert")?.addEventListener("change",F);let n=document.getElementById("mobileSearchInput");n&&n.addEventListener("input",z(()=>{let a=document.getElementById("mobileSearchClear");a&&(a.style.display=n.value.trim()?"flex":"none"),F()},250)),window.addEventListener("resize",z(()=>{let a=(location.hash||"").slice(1);!dt()&&a==="trang-chu"&&(location.hash="tin-thu-mua",X("tin-thu-mua"))},250)),document.addEventListener("click",a=>{let i=a.target.closest("#subview-ql-muavu th.sortable");if(!i)return;let o=i.getAttribute("data-sort");R===o?st=-st:(R=o,st=1),nt()}),document.addEventListener("click",a=>{let i=a.target.closest("#hhTable th.sortable");if(!i)return;let o=i.getAttribute("data-sort");rt===o?lt=-lt:(rt=o,lt=1),Pt()}),Rn()})();var Uo='a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',vt=null;function O(t){M(),vt=document.activeElement;let e=t.querySelector(".modal")||t,n=()=>[...e.querySelectorAll(Uo)],a=i=>{if(i.key!=="Tab")return;let o=n();o.length&&(i.shiftKey?document.activeElement===o[0]&&(i.preventDefault(),o[o.length-1].focus()):document.activeElement===o[o.length-1]&&(i.preventDefault(),o[0].focus()))};t._focusTrapHandler=a,t.addEventListener("keydown",a),requestAnimationFrame(()=>{let i=n()[0];i&&i.focus()})}function M(){document.querySelectorAll(".overlay.show").forEach(t=>{t._focusTrapHandler&&(t.removeEventListener("keydown",t._focusTrapHandler),delete t._focusTrapHandler)}),vt&&vt.isConnected&&vt.focus(),vt=null}(function(){let e=document.querySelectorAll(".overlay"),n=new MutationObserver(a=>{for(let i of a){if(i.attributeName!=="class")continue;let o=i.target;o.classList.contains("overlay")&&o.classList.contains("show")&&O(o)}});e.forEach(a=>n.observe(a,{attributes:!0,attributeFilter:["class"]}))})();Object.assign(window,{askAI:Do,clearChatHistory:$e,clearAiChat:$e,closeConfirmModal:Ee,closeConfirmDialog:Ee,closeAccountForm:mn,closeAccountsModal:Bo,closeApplyForm:je,closeAuthMenuThen:Gn,closeBuyForm:en,closeForm:pn,closeHhForm:nn,closeOutputForm:Fe,closePersonAuth:Dt,closeProcForm:Ue,closeProcDetail:ba,closeProductForm:Ke,closePwForm:rn,closeQualityForm:Oe,closeResetOverlay:sn,closeTestDataImportModal:ln,deleteAccount:qo,deleteHousehold:ho,deleteOutput:ya,deleteProcurement:$a,deleteProduct:Va,deleteQualityTest:ua,deleteSeason:Ao,doPersonLogin:go,doPersonRegister:yo,exportCsv:aa,logout:an,personLogout:po,downloadSampleTestJson:xo,importTestData:Lo,openAccountForm:So,openAccountsModal:Eo,openApplyForm:_a,openBuyForm:io,openForm:hn,openHhForm:uo,openOutputForm:pa,openPersonAuth:Ut,openProcForm:Qe,openProcDetail:fa,openProductForm:Xe,openPwForm:bo,openQualityForm:De,openResetOverlay:vo,openTestDataImportModal:wo,readTestDataImportFile:Co,saveAccountForm:To,saveForm:Po,saveHhForm:mo,saveOutputForm:ga,saveProcForm:ka,saveProductForm:Oa,savePwForm:Io,saveQualityForm:la,sendPasswordResetRequest:fo,submitApplication:La,submitBuyRequest:co,switchPersonAuth:on,toggleAccountApField:dn,toggleApplicants:wa,toggleAuthMenu:jn,toggleBuyers:Ma,toggleProcStatus:Ca,toggleProductStatus:Fa,togglePuApField:cn,quickAddSeason:Wn,quickAddQuality:Jn,quickAddProc:Zn,quickOpenAI:ta,quickFilterLowYield:Yn,openQrScanner:he,closeQrScanner:pe,switchCameraFacing:Ra,lookupManualCode:ja,openManualLookup:Ua,showProductDetail:Xa,showProductDetailByCode:kt,closeProductDetail:Je,openProductQrModal:Ya,closeProductQrModal:Ze,downloadProductQr:Wa,printProductQr:Ja,openHelpModal:Za,closeHelpModal:to,switchToDauRaProducts:eo,switchToDauRaDemand:no,switchToQuality:ao,switchToAI:oo,handleOpenProductForm:Da,openProductLightbox:Ka,closeImageLightbox:Ye,switchDetailImage:za,previewProductFormImage:Ht,clearProductFormImage:Ha,handleProductFormImgError:Na,clearAllProductFilters:qa,switchMobileNav:Oo,openMobileMoreSheet:Fo,closeMobileMoreSheet:ye,clearMobileSearch:Ta,switchToAdmin:Vo,renderMobileHomeStats:Ge});
